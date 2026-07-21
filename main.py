@@ -1,6 +1,8 @@
 """
-Rafeeq Kernel v2.0.0 - Main Application
-The most powerful digital ecosystem with the strongest kernel.
+╔══════════════════════════════════════════════════════════════════╗
+║  Rafeeq Kernel v2.1.0 — Container Edition                       ║
+║  نظام الحاويات المخصص لبيانات تسجيل الدخول                      ║
+╚══════════════════════════════════════════════════════════════════╝
 """
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,14 +10,16 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 import os
 
-# Import modules
-from database import init_database, get_system_stats
-from api.auth import router as auth_router
+# Import Container System
+from database import (
+    ContainerManager, AuthService, get_container_stats,
+    auth_router, SessionContainerOps
+)
 
 app = FastAPI(
     title="Rafeeq Kernel",
-    description="Your intelligent AI companion",
-    version="2.0.0"
+    description="Your intelligent AI companion — Container Edition",
+    version="2.1.0"
 )
 
 # CORS
@@ -27,44 +31,43 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize database on startup
+# Initialize containers on startup
 @app.on_event("startup")
 async def startup_event():
-    print("🚀 Rafeeq Kernel v2.0.0 starting...")
+    print("🚀 Rafeeq Kernel v2.1.0 (Container Edition) starting...")
     try:
-        init_database()
-        print("✅ Database initialized")
+        ContainerManager.init_containers()
+        print("✅ All containers initialized")
+        # Cleanup expired sessions
+        SessionContainerOps.cleanup_expired()
+        print("✅ Expired sessions cleaned")
     except Exception as e:
-        print(f"⚠️ Database init warning: {e}")
+        print(f"⚠️ Container init warning: {e}")
 
 # Mount static files
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Include routers
+# Include auth router (container-based)
 app.include_router(auth_router)
 
-# Health check
+# Health check — shows container stats
 @app.get("/health")
 async def health_check():
-    return get_system_stats()
+    return get_container_stats()
 
-# Root - serve index
+# Root
 @app.get("/")
 async def root():
     if os.path.exists("index.html"):
         return FileResponse("index.html")
     return JSONResponse({
         "name": "Rafeeq Kernel",
-        "version": "2.0.0",
+        "version": "2.1.0",
+        "edition": "Container Edition",
         "status": "active",
         "message": "من بعد فضل الله اشكر دولة مصر لانها اتاحت لي فرصة لكي اقوم بهذا العمل"
     })
-
-# API status
-@app.get("/api/status")
-async def api_status():
-    return get_system_stats()
 
 if __name__ == "__main__":
     import uvicorn
