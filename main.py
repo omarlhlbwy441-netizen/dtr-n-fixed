@@ -1,89 +1,71 @@
+"""
+Rafeeq Kernel v2.0.0 - Main Application
+The most powerful digital ecosystem with the strongest kernel.
+"""
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse
 import os
 
-app = FastAPI(title="DTR-N", version="1.2.0")
+# Import modules
+from database import init_database, get_system_stats
+from api.auth import router as auth_router
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+app = FastAPI(
+    title="Rafeeq Kernel",
+    description="Your intelligent AI companion",
+    version="2.0.0"
+)
 
-# Serve static files if directory exists
-static_dir = os.path.join(BASE_DIR, "static")
-if os.path.exists(static_dir):
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.get("/", response_class=HTMLResponse)
-async def root():
-    file_path = os.path.join(BASE_DIR, "thank-you-egypt.html")
-    if os.path.exists(file_path):
-        with open(file_path, "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
-    return HTMLResponse(content="<h1>DTR-N System</h1>")
+# Initialize database on startup
+@app.on_event("startup")
+async def startup_event():
+    print("🚀 Rafeeq Kernel v2.0.0 starting...")
+    try:
+        init_database()
+        print("✅ Database initialized")
+    except Exception as e:
+        print(f"⚠️ Database init warning: {e}")
 
-@app.get("/thank-you-egypt.html", response_class=HTMLResponse)
-async def thank_you_page():
-    file_path = os.path.join(BASE_DIR, "thank-you-egypt.html")
-    if os.path.exists(file_path):
-        with open(file_path, "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
-    return HTMLResponse(content="<h1>Thank You Egypt</h1>")
+# Mount static files
+if os.path.exists("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
 
-@app.get("/app.html", response_class=HTMLResponse)
-async def app_page():
-    file_path = os.path.join(BASE_DIR, "app.html")
-    if os.path.exists(file_path):
-        with open(file_path, "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
-    return HTMLResponse(content="<h1>App Page</h1>")
+# Include routers
+app.include_router(auth_router)
 
-@app.get("/app", response_class=HTMLResponse)
-async def app_redirect():
-    return await app_page()
-
-@app.get("/login", response_class=HTMLResponse)
-async def login_page():
-    file_path = os.path.join(BASE_DIR, "app.html")
-    if os.path.exists(file_path):
-        with open(file_path, "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
-    return HTMLResponse(content="<h1>Login Page</h1>")
-
-@app.get("/login.html", response_class=HTMLResponse)
-async def login_html_page():
-    return await login_page()
-
-@app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard_page():
-    file_path = os.path.join(BASE_DIR, "session-dashboard.html")
-    if os.path.exists(file_path):
-        with open(file_path, "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
-    return HTMLResponse(content="<h1>Dashboard</h1>")
-
-@app.get("/dashboard.html", response_class=HTMLResponse)
-async def dashboard_html_page():
-    return await dashboard_page()
-
-@app.get("/sessions", response_class=HTMLResponse)
-async def sessions_page():
-    file_path = os.path.join(BASE_DIR, "session-dashboard.html")
-    if os.path.exists(file_path):
-        with open(file_path, "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
-    return HTMLResponse(content="<h1>Sessions</h1>")
-
-@app.get("/session-dashboard.html", response_class=HTMLResponse)
-async def session_dashboard_page():
-    return await sessions_page()
-
-@app.get("/index.html", response_class=HTMLResponse)
-async def index_page():
-    return await root()
-
+# Health check
 @app.get("/health")
-async def health():
-    return {"status": "ok", "version": "1.2.0"}
+async def health_check():
+    return get_system_stats()
+
+# Root - serve index
+@app.get("/")
+async def root():
+    if os.path.exists("index.html"):
+        return FileResponse("index.html")
+    return JSONResponse({
+        "name": "Rafeeq Kernel",
+        "version": "2.0.0",
+        "status": "active",
+        "message": "من بعد فضل الله اشكر دولة مصر لانها اتاحت لي فرصة لكي اقوم بهذا العمل"
+    })
+
+# API status
+@app.get("/api/status")
+async def api_status():
+    return get_system_stats()
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
