@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>DTR-N | نظام الجلسات والموارد</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        /* ===== MARBLE BACKGROUND ===== */
+        body {
+            font-family: 'Cairo', sans-serif;
+            min-height: 100vh; color: #e8e8e8;
+            padding: 1rem;
+            position: relative;
+            background: 
+                radial-gradient(ellipse at 20% 30%, rgba(139, 0, 0, 0.15) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 70%, rgba(101, 67, 33, 0.2) 0%, transparent 50%),
+                radial-gradient(ellipse at 50% 50%, rgba(0, 0, 0, 0.8) 0%, transparent 70%),
+                linear-gradient(135deg, #0a0a0a 0%, #1a0a0a 25%, #0d0d0d 50%, #1a0a05 75%, #0a0a0a 100%);
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-image: 
+                url("data:image/svg+xml,%3Csvg width='200' height='200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+            opacity: 0.6;
+            z-index: -2;
+            pointer-events: none;
+        }
+
+        body::after {
+            content: '';
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: 
+                radial-gradient(ellipse 600px 400px at 30% 40%, rgba(139, 0, 0, 0.08) 0%, transparent 70%),
+                radial-gradient(ellipse 400px 600px at 70% 60%, rgba(101, 67, 33, 0.1) 0%, transparent 70%),
+                radial-gradient(ellipse 300px 300px at 50% 80%, rgba(218, 165, 32, 0.05) 0%, transparent 70%);
+            z-index: -1;
+            pointer-events: none;
+        }
+
+        /* ===== LIGHTNING EFFECT ===== */
+        .lightning-container {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 0;
+            overflow: hidden;
+        }
+
+        .lightning {
+            position: absolute;
+            width: 2px;
+            background: linear-gradient(180deg, transparent, rgba(255, 215, 0, 0.8), rgba(255, 69, 0, 0.6), transparent);
+            opacity: 0;
+            filter: blur(1px);
+            box-shadow: 0 0 10px rgba(255, 215, 0, 0.5), 0 0 20px rgba(255, 69, 0, 0.3);
+        }
+
+        .lightning:nth-child(1) { left: 15%; height: 150px; top: -150px; animation: lightningStrike 4s infinite 0s; }
+        .lightning:nth-child(2) { left: 45%; height: 200px; top: -200px; animation: lightningStrike 5s infinite 1.5s; }
+        .lightning:nth-child(3) { left: 75%; height: 120px; top: -120px; animation: lightningStrike 3.5s infinite 2.8s; }
+        .lightning:nth-child(4) { left: 85%; height: 180px; top: -180px; animation: lightningStrike 6s infinite 0.7s; }
+        .lightning:nth-child(5) { left: 25%; height: 100px; top: -100px; animation: lightningStrike 4.5s infinite 3.2s; }
+
+        @keyframes lightningStrike {
+            0%, 90%, 100% { opacity: 0; transform: translateY(0); }
+            91% { opacity: 1; transform: translateY(20vh); }
+            92% { opacity: 0.3; transform: translateY(40vh); }
+            93% { opacity: 1; transform: translateY(60vh); }
+            94% { opacity: 0; transform: translateY(80vh); }
+        }
+
+        /* ===== FLOATING PARTICLES ===== */
+        .particles {
+            position: fixed; top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none; z-index: 1;
+            overflow: hidden;
+        }
+
+        .particle {
+            position: absolute;
+            width: 4px; height: 4px;
+            background: rgba(218, 165, 32, 0.6);
+            border-radius: 50%;
+            box-shadow: 0 0 6px rgba(218, 165, 32, 0.4);
+            animation: floatParticle 15s infinite linear;
+        }
+
+        @keyframes floatParticle {
+            0% { transform: translateY(100vh) translateX(0) rotate(0deg); opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { transform: translateY(-10vh) translateX(50px) rotate(720deg); opacity: 0; }
+        }
+
+        /* ===== GOLDEN BORDER ===== */
+        .gold-border-top {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, #8B0000, #FFD700, #8B4513, #FFD700, #8B0000, transparent);
+            z-index: 100;
+            animation: borderShine 3s linear infinite;
+            background-size: 200% 100%;
+        }
+
+        .gold-border-bottom {
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, #8B0000, #FFD700, #8B4513, #FFD700, #8B0000, transparent);
+            z-index: 100;
+            animation: borderShine 3s linear infinite reverse;
+            background-size: 200% 100%;
+        }
+
+        @keyframes borderShine {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        /* ===== CORNER DECORATIONS ===== */
+        .corner {
+            position: fixed;
+            width: 60px; height: 60px;
+            z-index: 50;
+            pointer-events: none;
+        }
+        .corner-tl { top: 10px; left: 10px; border-top: 2px solid rgba(218, 165, 32, 0.4); border-left: 2px solid rgba(218, 165, 32, 0.4); }
+        .corner-tr { top: 10px; right: 10px; border-top: 2px solid rgba(218, 165, 32, 0.4); border-right: 2px solid rgba(218, 165, 32, 0.4); }
+        .corner-bl { bottom: 10px; left: 10px; border-bottom: 2px solid rgba(218, 165, 32, 0.4); border-left: 2px solid rgba(218, 165, 32, 0.4); }
+        .corner-br { bottom: 10px; right: 10px; border-bottom: 2px solid rgba(218, 165, 32, 0.4); border-right: 2px solid rgba(218, 165, 32, 0.4); }
+
+        /* ===== CONTAINER ===== */
+        .container { 
+            max-width: 1200px; 
+            margin: 0 auto; 
+            position: relative; 
+            z-index: 10; 
+        }
+
+        /* ===== HEADER WITH SKULL ===== */
+        .header {
+            text-align: center; padding: 2rem 1rem;
+            border-bottom: 2px solid rgba(218, 165, 32, 0.3);
+            margin-bottom: 2rem;
+            position: relative;
+        }
+
+        .header-skull {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 1rem;
+            display: block;
+            filter: drop-shadow(0 0 15px rgba(139, 0, 0, 0.5)) drop-shadow(0 0 30px rgba(218, 165, 32, 0.3));
+            animation: skullFloat 4s ease-in-out infinite;
+            border-radius: 12px;
+        }
+
+        @keyframes skullFloat {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-8px); }
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            background: linear-gradient(135deg, #8B0000, #CD5C5C, #FFD700, #8B4513, #8B0000);
+            background-size: 300% 300%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: gradientShift 4s ease infinite;
+            text-shadow: 0 0 30px rgba(139, 0, 0, 0.3);
+        }
+
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        .header p { 
+            color: rgba(205, 92, 92, 0.8); 
+            margin-top: 0.5rem; 
+            font-weight: 600;
+        }
+
+        /* ===== GLASS CARDS ===== */
+        .comparison-banner {
+            background: rgba(20, 10, 10, 0.4);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(218, 165, 32, 0.2);
+            border-radius: 24px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .comparison-banner::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,0.03) 0%, transparent 50%, rgba(255,255,255,0.01) 100%);
+            border-radius: 24px;
+            pointer-events: none;
+        }
+
+        .comparison-banner h2 {
+            color: #FFD700; font-size: 1.5rem; margin-bottom: 1rem;
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.3);
+        }
+
+        .comparison-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem; margin-top: 1rem;
+        }
+
+        .comparison-card {
+            background: rgba(0,0,0,0.3); 
+            border-radius: 16px; padding: 1rem;
+            border: 1px solid rgba(218, 165, 32, 0.15);
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+        }
+
+        .comparison-card:hover {
+            border-color: rgba(218, 165, 32, 0.4);
+            transform: translateY(-3px);
+            box-shadow: 0 10px 30px rgba(139, 0, 0, 0.2);
+        }
+
+        .comparison-card .label { font-size: 0.8rem; color: rgba(205, 92, 92, 0.8); }
+        .comparison-card .value {
+            font-size: 1.5rem; font-weight: 900; 
+            background: linear-gradient(135deg, #FFD700, #CD5C5C);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-top: 0.3rem;
+        }
+        .comparison-card .vs {
+            font-size: 0.75rem; color: rgba(139, 0, 0, 0.6); margin-top: 0.3rem;
+        }
+
+        /* ===== RESOURCES GRID ===== */
+        .resources-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem; margin-bottom: 2rem;
+        }
+
+        .resource-card {
+            background: rgba(20, 10, 10, 0.4);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            border: 1px solid rgba(218, 165, 32, 0.15);
+            border-radius: 20px; padding: 1.5rem;
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .resource-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,0.02) 0%, transparent 50%, rgba(255,255,255,0.01) 100%);
+            border-radius: 20px;
+            pointer-events: none;
+        }
+
+        .resource-card:hover {
+            border-color: rgba(218, 165, 32, 0.4);
+            transform: translateY(-5px) scale(1.02);
+            box-shadow: 0 15px 40px rgba(139, 0, 0, 0.3), 0 0 30px rgba(218, 165, 32, 0.1);
+        }
+
+        .resource-card .icon {
+            font-size: 2rem; 
+            background: linear-gradient(135deg, #FFD700, #CD5C5C);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 0.5rem;
+        }
+
+        .resource-card h3 { 
+            font-size: 1.1rem; 
+            margin-bottom: 1rem; 
+            color: rgba(232, 232, 232, 0.95);
+        }
+
+        .progress-bar {
+            height: 8px; background: rgba(0,0,0,0.4);
+            border-radius: 4px; overflow: hidden; margin-bottom: 0.5rem;
+            border: 1px solid rgba(218, 165, 32, 0.1);
+        }
+
+        .progress-fill {
+            height: 100%; border-radius: 4px;
+            transition: width 0.5s ease;
+        }
+        .progress-fill.green { background: linear-gradient(90deg, #8B0000, #CD5C5C); }
+        .progress-fill.yellow { background: linear-gradient(90deg, #FFD700, #DAA520); }
+        .progress-fill.red { background: linear-gradient(90deg, #8B0000, #FF0000); }
+
+        .resource-stats {
+            display: flex; justify-content: space-between;
+            font-size: 0.85rem; color: rgba(205, 92, 92, 0.7);
+        }
+
+        /* ===== SESSION CONTROLS ===== */
+        .session-controls {
+            background: rgba(20, 10, 10, 0.4);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(218, 165, 32, 0.2);
+            border-radius: 24px; padding: 1.5rem;
+            margin-bottom: 2rem; text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .session-controls::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,0.02) 0%, transparent 50%, rgba(255,255,255,0.01) 100%);
+            border-radius: 24px;
+            pointer-events: none;
+        }
+
+        .session-controls h3 { 
+            color: #FFD700; 
+            margin-bottom: 1rem;
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.2);
+        }
+
+        /* ===== CRYSTAL BUTTONS ===== */
+        .btn {
+            padding: 0.8rem 2rem; border-radius: 16px; border: none;
+            font-family: 'Cairo', sans-serif; font-size: 1rem; font-weight: 700;
+            cursor: pointer; transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, rgba(139, 0, 0, 0.8), rgba(101, 67, 33, 0.9));
+            color: #FFD700;
+            border: 1px solid rgba(218, 165, 32, 0.4);
+            box-shadow: 
+                0 4px 15px rgba(139, 0, 0, 0.4),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1),
+                0 0 30px rgba(218, 165, 32, 0.1);
+        }
+
+        .btn-primary::before {
+            content: '';
+            position: absolute;
+            top: 0; left: -100%;
+            width: 100%; height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 215, 0, 0.2), transparent);
+            transition: left 0.5s;
+        }
+
+        .btn-primary:hover::before {
+            left: 100%;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-3px) scale(1.05);
+            box-shadow: 
+                0 8px 25px rgba(139, 0, 0, 0.5),
+                inset 0 1px 0 rgba(255, 255, 255, 0.15),
+                0 0 40px rgba(218, 165, 32, 0.2);
+            border-color: rgba(218, 165, 32, 0.6);
+        }
+
+        .session-btn {
+            padding: 1rem 3rem; border-radius: 16px;
+            border: 1px solid rgba(218, 165, 32, 0.4);
+            background: linear-gradient(135deg, rgba(139, 0, 0, 0.6), rgba(101, 67, 33, 0.7));
+            color: #FFD700; font-family: 'Cairo', sans-serif;
+            font-size: 1.2rem; font-weight: 700; cursor: pointer;
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            margin: 0.5rem;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(139, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1);
+        }
+
+        .session-btn::before {
+            content: '';
+            position: absolute;
+            top: 0; left: -100%;
+            width: 100%; height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 215, 0, 0.15), transparent);
+            transition: left 0.5s;
+        }
+
+        .session-btn:hover::before {
+            left: 100%;
+        }
+
+        .session-btn:hover {
+            transform: translateY(-3px) scale(1.05);
+            box-shadow: 0 8px 25px rgba(139, 0, 0, 0.5), 0 0 30px rgba(218, 165, 32, 0.2);
+            border-color: rgba(218, 165, 32, 0.6);
+        }
+
+        .session-btn:disabled {
+            opacity: 0.5; cursor: not-allowed; transform: none;
+            box-shadow: none;
+        }
+
+        .active-session {
+            background: rgba(139, 0, 0, 0.1);
+            border: 1px solid rgba(218, 165, 32, 0.2);
+            border-radius: 16px; padding: 1rem;
+            margin-top: 1rem; display: none;
+            backdrop-filter: blur(10px);
+        }
+        .active-session.show { display: block; }
+
+        /* ===== PLANS SECTION ===== */
+        .plans-section { margin-top: 3rem; }
+        .plans-section h2 {
+            text-align: center; 
+            background: linear-gradient(135deg, #FFD700, #CD5C5C, #8B0000);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-size: 2rem;
+            margin-bottom: 2rem;
+            text-shadow: 0 0 20px rgba(139, 0, 0, 0.3);
+        }
+
+        .plans-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .plan-card {
+            background: rgba(20, 10, 10, 0.4);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            border: 2px solid rgba(255,255,255,0.1);
+            border-radius: 24px; padding: 1.5rem;
+            text-align: center; transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            position: relative; overflow: hidden;
+        }
+
+        .plan-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,0.02) 0%, transparent 50%, rgba(255,255,255,0.01) 100%);
+            border-radius: 24px;
+            pointer-events: none;
+        }
+
+        .plan-card:hover { 
+            transform: translateY(-8px) scale(1.02); 
+            box-shadow: 0 20px 50px rgba(139, 0, 0, 0.3), 0 0 30px rgba(218, 165, 32, 0.1);
+        }
+
+        .plan-card.free { border-color: rgba(139, 0, 0, 0.3); }
+        .plan-card.silver { border-color: rgba(192, 192, 192, 0.3); }
+        .plan-card.gold { border-color: rgba(218, 165, 32, 0.4); }
+        .plan-card.diamond { border-color: rgba(0, 188, 212, 0.3); }
+
+        .plan-card.recommended::before {
+            content: "موصى به"; position: absolute; top: 10px; left: -30px;
+            background: linear-gradient(135deg, #8B0000, #FFD700); 
+            color: #0a0a0a; padding: 2px 30px;
+            font-size: 0.7rem; font-weight: 700; transform: rotate(-45deg);
+            box-shadow: 0 2px 10px rgba(139, 0, 0, 0.4);
+        }
+
+        .plan-card h3 { 
+            font-size: 1.5rem; 
+            margin-bottom: 0.5rem; 
+            color: rgba(232, 232, 232, 0.95);
+        }
+
+        .plan-card .price { 
+            font-size: 2rem; font-weight: 900; 
+            background: linear-gradient(135deg, #FFD700, #CD5C5C);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .plan-card .price span { font-size: 0.8rem; color: rgba(205, 92, 92, 0.7); }
+
+        .plan-features { list-style: none; margin: 1.5rem 0; text-align: right; }
+        .plan-features li {
+            padding: 0.5rem 0; border-bottom: 1px solid rgba(218, 165, 32, 0.1);
+            font-size: 0.9rem; display: flex; align-items: center; gap: 8px;
+            color: rgba(232, 232, 232, 0.85);
+        }
+        .plan-features li i { 
+            color: #FFD700; 
+            text-shadow: 0 0 5px rgba(255, 215, 0, 0.3);
+        }
+
+        /* ===== RESPONSIVE ===== */
+        @media (max-width: 768px) {
+            .header h1 { font-size: 1.8rem; }
+            .comparison-grid { grid-template-columns: 1fr; }
+            .resources-grid { grid-template-columns: 1fr; }
+            .plans-grid { grid-template-columns: 1fr; }
+            .header-skull { width: 60px; height: 60px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="lightning-container">
+        <div class="lightning"></div>
+        <div class="lightning"></div>
+        <div class="lightning"></div>
+        <div class="lightning"></div>
+        <div class="lightning"></div>
+    </div>
+
+    <div class="particles" id="particles"></div>
+
+    <div class="gold-border-top"></div>
+    <div class="gold-border-bottom"></div>
+
+    <div class="corner corner-tl"></div>
+    <div class="corner corner-tr"></div>
+    <div class="corner corner-bl"></div>
+    <div class="corner corner-br"></div>
+
+    <div class="container">
+        <div class="header">
+            <img src="https://images.unsplash.com/photo-1614726365723-49cfae9278b7?w=200&h=200&fit=crop&auto=format&q=80" 
+                 alt="DTR-N Skull" class="header-skull" id="headerSkull"
+                 onerror="this.src='https://cdn-icons-png.flaticon.com/512/2913/2913465.png'">
+            <h1>DTR-N نظام الجلسات</h1>
+            <p>إدارة الموارد والجلسات | 1 جلسة = 50 خطوة (2x Kimi)</p>
+        </div>
+
+        <div class="comparison-banner">
+            <h2><i class="fas fa-bolt"></i> مقارنة DTR-N vs Kimi</h2>
+            <div class="comparison-grid">
+                <div class="comparison-card">
+                    <div class="label">خطوات لكل جلسة</div>
+                    <div class="value">50</div>
+                    <div class="vs">Kimi: 25 | <span style="color:#CD5C5C;">2x أكثر</span></div>
+                </div>
+                <div class="comparison-card">
+                    <div class="label">جلسات يومية (مجاني)</div>
+                    <div class="value">3</div>
+                    <div class="vs">إجمالي: 150 خطوة/يوم</div>
+                </div>
+                <div class="comparison-card">
+                    <div class="label">توليد كود يومي</div>
+                    <div class="value">5</div>
+                    <div class="vs">ملفات Python/JS</div>
+                </div>
+                <div class="comparison-card">
+                    <div class="label">رفع GitHub</div>
+                    <div class="value">2</div>
+                    <div class="vs">دفع تلقائي/يوم</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="session-controls">
+            <h3><i class="fas fa-play-circle"></i> التحكم في الجلسات</h3>
+            <button class="session-btn" id="startSessionBtn" onclick="startSession()">
+                <i class="fas fa-rocket"></i> بدء جلسة جديدة
+            </button>
+            <div class="active-session" id="activeSession">
+                <p><i class="fas fa-circle" style="color:#8B0000;"></i> جلسة نشطة: <span id="sessionId">-</span></p>
+                <p>الخطوات المستخدمة: <span id="stepsUsed">0</span> / <span id="stepsTotal">50</span></p>
+                <button class="session-btn" style="font-size:0.9rem;padding:0.5rem 1.5rem;" onclick="endSession()">
+                    <i class="fas fa-stop"></i> إنهاء الجلسة
+                </button>
+            </div>
+        </div>
+
+        <div class="resources-grid" id="resourcesGrid">
+            <!-- Resources loaded dynamically -->
+        </div>
+
+        <div class="plans-section">
+            <h2><i class="fas fa-crown"></i> باقات الاشتراك</h2>
+            <div class="plans-grid">
+                <div class="plan-card free">
+                    <h3>مجاني</h3>
+                    <div class="price">$0 <span>/شهر</span></div>
+                    <ul class="plan-features">
+                        <li><i class="fas fa-check"></i> 3 جلسات يومية</li>
+                        <li><i class="fas fa-check"></i> 50 خطوة/جلسة</li>
+                        <li><i class="fas fa-check"></i> 50 ماس يومياً</li>
+                        <li><i class="fas fa-check"></i> 5 توليدات كود</li>
+                        <li><i class="fas fa-check"></i> 2 رفع GitHub</li>
+                        <li><i class="fas fa-check"></i> 100 MB تخزين</li>
+                    </ul>
+                    <button class="btn btn-primary">الاشتراك الحالي</button>
+                </div>
+
+                <div class="plan-card silver">
+                    <h3>فضي</h3>
+                    <div class="price">$9 <span>/شهر</span></div>
+                    <ul class="plan-features">
+                        <li><i class="fas fa-check"></i> 5 جلسات يومية</li>
+                        <li><i class="fas fa-check"></i> 50 خطوة/جلسة</li>
+                        <li><i class="fas fa-check"></i> 150 ماس يومياً</li>
+                        <li><i class="fas fa-check"></i> 15 توليد كود</li>
+                        <li><i class="fas fa-check"></i> 10 رفع GitHub</li>
+                        <li><i class="fas fa-check"></i> 500 MB تخزين</li>
+                    </ul>
+                    <button class="btn btn-primary">ترقية</button>
+                </div>
+
+                <div class="plan-card gold recommended">
+                    <h3>ذهبي</h3>
+                    <div class="price">$29 <span>/شهر</span></div>
+                    <ul class="plan-features">
+                        <li><i class="fas fa-check"></i> 10 جلسات يومية</li>
+                        <li><i class="fas fa-check"></i> 50 خطوة/جلسة</li>
+                        <li><i class="fas fa-check"></i> 400 ماس يومياً</li>
+                        <li><i class="fas fa-check"></i> 40 توليد كود</li>
+                        <li><i class="fas fa-check"></i> 30 رفع GitHub</li>
+                        <li><i class="fas fa-check"></i> 2 GB تخزين</li>
+                        <li><i class="fas fa-check"></i> أولوية عالية</li>
+                    </ul>
+                    <button class="btn btn-primary">ترقية</button>
+                </div>
+
+                <div class="plan-card diamond">
+                    <h3>ماسي</h3>
+                    <div class="price">$99 <span>/شهر</span></div>
+                    <ul class="plan-features">
+                        <li><i class="fas fa-check"></i> 50 جلسة يومية</li>
+                        <li><i class="fas fa-check"></i> 50 خطوة/جلسة</li>
+                        <li><i class="fas fa-check"></i> 2000 ماس يومياً</li>
+                        <li><i class="fas fa-check"></i> 200 توليد كود</li>
+                        <li><i class="fas fa-check"></i> 100 رفع GitHub</li>
+                        <li><i class="fas fa-check"></i> 10 GB تخزين</li>
+                        <li><i class="fas fa-check"></i> أولوية قصوى</li>
+                    </ul>
+                    <button class="btn btn-primary">ترقية</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Generate particles
+        const particlesContainer = document.getElementById('particles');
+        for (let i = 0; i < 25; i++) {
+            const p = document.createElement('div');
+            p.className = 'particle';
+            p.style.left = Math.random() * 100 + '%';
+            p.style.animationDelay = Math.random() * 15 + 's';
+            p.style.animationDuration = (10 + Math.random() * 10) + 's';
+            p.style.width = (2 + Math.random() * 4) + 'px';
+            p.style.height = p.style.width;
+            particlesContainer.appendChild(p);
+        }
+
+        const API_BASE = '/api';
+        let currentSession = null;
+        let token = localStorage.getItem('dtrn_token') || '';
+
+        async function loadResources() {
+            try {
+                const response = await fetch(`${API_BASE}/resources`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const data = await response.json();
+                renderResources(data);
+            } catch (e) {
+                console.error('Failed to load resources:', e);
+                renderResources({
+                    sessions: { used: 1, total: 3, remaining: 2 },
+                    steps: { used: 25, total: 150, remaining: 125 },
+                    diamonds: { used: 10, total: 50, remaining: 40 },
+                    code_generations: { used: 2, total: 5, remaining: 3 },
+                    github_pushes: { used: 0, total: 2, remaining: 2 },
+                    evolution_cycles: { used: 0, total: 1, remaining: 1 },
+                    storage: { used_mb: 15, total_mb: 100, remaining_mb: 85 },
+                });
+            }
+        }
+
+        function renderResources(data) {
+            const grid = document.getElementById('resourcesGrid');
+            const resources = [
+                { key: 'sessions', icon: 'fa-play-circle', label: 'الجلسات', color: 'green' },
+                { key: 'steps', icon: 'fa-shoe-prints', label: 'الخطوات', color: 'yellow' },
+                { key: 'diamonds', icon: 'fa-gem', label: 'الماس', color: 'green' },
+                { key: 'code_generations', icon: 'fa-code', label: 'توليد الكود', color: 'yellow' },
+                { key: 'github_pushes', icon: 'fa-github', label: 'رفع GitHub', color: 'green' },
+                { key: 'evolution_cycles', icon: 'fa-dna', label: 'دورات التطور', color: 'yellow' },
+                { key: 'storage', icon: 'fa-hdd', label: 'التخزين (MB)', color: 'green' },
+            ];
+
+            grid.innerHTML = resources.map(r => {
+                const res = data[r.key];
+                const percent = res ? ((res.used / res.total) * 100) : 0;
+                const colorClass = percent > 80 ? 'red' : percent > 50 ? 'yellow' : 'green';
+                return `
+                    <div class="resource-card">
+                        <div class="icon"><i class="fas ${r.icon}"></i></div>
+                        <h3>${r.label}</h3>
+                        <div class="progress-bar">
+                            <div class="progress-fill ${colorClass}" style="width: ${percent}%"></div>
+                        </div>
+                        <div class="resource-stats">
+                            <span>مستخدم: ${res ? res.used : 0}</span>
+                            <span>متبقي: ${res ? res.remaining : 0}</span>
+                            <span>إجمالي: ${res ? res.total : 0}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function startSession() {
+            try {
+                const response = await fetch(`${API_BASE}/sessions/start`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ project_name: 'DTR-N Session' })
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    currentSession = data;
+                    document.getElementById('sessionId').textContent = data.session_id;
+                    document.getElementById('stepsTotal').textContent = data.steps_total;
+                    document.getElementById('stepsUsed').textContent = '0';
+                    document.getElementById('activeSession').classList.add('show');
+                    document.getElementById('startSessionBtn').disabled = true;
+                    alert(`✅ جلسة ${data.session_number} بدأت! ${data.steps_total} خطوة متاحة`);
+                } else {
+                    alert(`❌ ${data.error || 'فشل بدء الجلسة'}`);
+                }
+            } catch (e) {
+                console.error('Start session error:', e);
+                currentSession = { session_id: 1, session_number: 2, steps_total: 50 };
+                document.getElementById('sessionId').textContent = '1';
+                document.getElementById('stepsTotal').textContent = '50';
+                document.getElementById('activeSession').classList.add('show');
+                document.getElementById('startSessionBtn').disabled = true;
+                alert('✅ جلسة تجريبية بدأت! 50 خطوة متاحة');
+            }
+        }
+
+        async function endSession() {
+            if (!currentSession) return;
+            try {
+                await fetch(`${API_BASE}/sessions/${currentSession.session_id}/end`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                document.getElementById('activeSession').classList.remove('show');
+                document.getElementById('startSessionBtn').disabled = false;
+                currentSession = null;
+                alert('✅ الجلسة انتهت');
+                loadResources();
+            } catch (e) {
+                console.error('End session error:', e);
+                document.getElementById('activeSession').classList.remove('show');
+                document.getElementById('startSessionBtn').disabled = false;
+                currentSession = null;
+            }
+        }
+
+        loadResources();
+    </script>
+</body>
+</html>
