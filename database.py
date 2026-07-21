@@ -1,14 +1,8 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║  Rafeeq Kernel — Container System v2.1                            ║
-║  نظام الحاويات المخصص لبيانات تسجيل الدخول فقط                   ║
+║  Rafeeq Kernel v2.2.1 — Unified Database & Auth System           ║
+║  نظام موحد: حاويات + مصادقة + تحديث تلقائي                      ║
 ╚══════════════════════════════════════════════════════════════════╝
-
-Architecture:
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│  users          │    │  sessions       │    │  login_logs     │
-│  (بيانات أساسية) │    │  (جلسات نشطة)   │    │  (سجل الدخول)   │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
 """
 
 import os
@@ -18,13 +12,13 @@ import secrets
 import bcrypt
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, field
 from enum import Enum
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
 # ═════════════════════════════════════════════════════════════════
-# CONFIGURATION
+# CONFIG
 # ═════════════════════════════════════════════════════════════════
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -32,176 +26,495 @@ DATABASE_URL = os.getenv(
 )
 
 # ═════════════════════════════════════════════════════════════════
-# ENUMS
+# SQL TYPES
 # ═════════════════════════════════════════════════════════════════
-class LoginStatus(Enum):
-    SUCCESS = "success"
-    FAILED = "failed"
-    SUSPICIOUS = "suspicious"
-    BLOCKED = "blocked"
-
-class SessionStatus(Enum):
-    ACTIVE = "active"
-    EXPIRED = "expired"
-    REVOKED = "revoked"
-    LOGGED_OUT = "logged_out"
+class SQLType(Enum):
+    STRING = "VARCHAR"
+    TEXT = "TEXT"
+    INTEGER = "INTEGER"
+    BIGINT = "BIGINT"
+    SERIAL = "SERIAL"
+    BOOLEAN = "BOOLEAN"
+    TIMESTAMP = "TIMESTAMP"
+    DATE = "DATE"
+    TIME = "TIME"
+    FLOAT = "FLOAT"
+    DOUBLE = "DOUBLE PRECISION"
+    DECIMAL = "DECIMAL"
+    JSON = "JSON"
+    JSONB = "JSONB"
+    UUID = "UUID"
+    BYTEA = "BYTEA"
+    INET = "INET"
+    CIDR = "CIDR"
 
 # ═════════════════════════════════════════════════════════════════
-# DATA CLASSES — Container Schemas
+# SCHEMA DEFINITION
 # ═════════════════════════════════════════════════════════════════
 
 @dataclass
-class UserContainer:
-    """حاوية المستخدم — البيانات الأساسية فقط"""
-    id: int
-    email: str
-    username: Optional[str]
-    password_hash: str
-    full_name: Optional[str]
-    role: str = "user"
-    status: str = "active"
-    email_verified: bool = False
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+class ColumnDef:
+    name: str
+    type: SQLType
+    length: Optional[int] = None
+    nullable: bool = True
+    default: Any = None
+    primary_key: bool = False
+    unique: bool = False
+    index: bool = False
+    references: Optional[str] = None
+    on_delete: Optional[str] = None
+    check_constraint: Optional[str] = None
+
+    def to_sql(self) -> str:
+        parts = [f'"{self.name}"']
+        if self.length and self.type == SQLType.STRING:
+            parts.append(f"{self.type.value}({self.length})")
+        else:
+            parts.append(self.type.value)
+        if self.primary_key:
+            parts.append("PRIMARY KEY")
+        if not self.nullable:
+            parts.append("NOT NULL")
+        if self.unique and not self.primary_key:
+            parts.append("UNIQUE")
+        if self.default is not None:
+            if isinstance(self.default, str):
+                if self.default == "CURRENT_TIMESTAMP":
+                    parts.append(f"DEFAULT {self.default}")
+                else:
+                    parts.append(f"DEFAULT '{self.default}'")
+            elif isinstance(self.default, bool):
+                parts.append(f"DEFAULT {'TRUE' if self.default else 'FALSE'}")
+            else:
+                parts.append(f"DEFAULT {self.default}")
+        if self.references:
+            ref = self.references.split(".")
+            if len(ref) == 2:
+                parts.append(f"REFERENCES {ref[0]}({ref[1]})")
+                if self.on_delete:
+                    parts.append(f"ON DELETE {self.on_delete}")
+        if self.check_constraint:
+            parts.append(f"CHECK ({self.check_constraint})")
+        return " ".join(parts)
 
 @dataclass
-class SessionContainer:
-    """حاوية الجلسة — بيانات تسجيل الدخول النشطة"""
-    id: int
-    user_id: int
-    token: str
-    device_info: Optional[str]  # نوع الجهاز
-    browser: Optional[str]      # المتصفح
-    os_info: Optional[str]      # نظام التشغيل
-    ip_address: Optional[str]   # عنوان IP
-    location: Optional[str]     # الموقع الجغرافي
-    status: str                 # active, expired, revoked, logged_out
-    login_time: datetime        # وقت الدخول
-    last_activity: datetime     # آخر نشاط
-    expires_at: datetime        # وقت الانتهاء
-    logout_time: Optional[datetime] = None  # وقت الخروج
+class TableDef:
+    name: str
+    columns: List[ColumnDef]
+    indexes: List[Dict[str, Any]] = field(default_factory=list)
+    constraints: List[str] = field(default_factory=list)
+    description: Optional[str] = None
+
+    def get_column(self, name: str) -> Optional[ColumnDef]:
+        for col in self.columns:
+            if col.name == name:
+                return col
+        return None
+
+    def to_create_sql(self) -> str:
+        col_defs = ",\n    ".join([col.to_sql() for col in self.columns])
+        return f"CREATE TABLE IF NOT EXISTS {self.name} (\n    {col_defs}\n)"
+
+    def to_index_sql(self) -> List[str]:
+        sqls = []
+        for idx in self.indexes:
+            idx_name = idx.get("name", f"idx_{self.name}_{'_'.join(idx['columns'])}")
+            cols = ", ".join([f'"{c}"' for c in idx["columns"]])
+            unique = "UNIQUE " if idx.get("unique") else ""
+            sqls.append(f"CREATE {unique}INDEX IF NOT EXISTS {idx_name} ON {self.name} ({cols})")
+        return sqls
 
 @dataclass
-class LoginLogContainer:
-    """حاوية سجل الدخول — كل محاولات الدخول"""
-    id: int
-    user_id: Optional[int]      # null if login failed (unknown user)
-    email_attempted: str          # البريد المُدخل
-    status: str                 # success, failed, suspicious, blocked
-    ip_address: Optional[str]
-    device_info: Optional[str]
-    browser: Optional[str]
-    os_info: Optional[str]
-    location: Optional[str]
-    failure_reason: Optional[str]  # سبب الفشل
-    session_token: Optional[str]   # token if successful
-    attempt_time: datetime         # وقت المحاولة
-    risk_score: int = 0             # درجة الخطورة (0-100)
+class SchemaDef:
+    version: str
+    tables: List[TableDef]
+    created_at: datetime = field(default_factory=datetime.now)
+
+    def get_table(self, name: str) -> Optional[TableDef]:
+        for tbl in self.tables:
+            if tbl.name == name:
+                return tbl
+        return None
+
+    def to_hash(self) -> str:
+        schema_str = json.dumps({
+            "version": self.version,
+            "tables": [
+                {"name": t.name, "columns": [{"name": c.name, "type": c.type.value, "nullable": c.nullable}
+                 for c in t.columns]}
+                for t in self.tables
+            ]
+        }, sort_keys=True)
+        return hashlib.sha256(schema_str.encode()).hexdigest()[:16]
 
 # ═════════════════════════════════════════════════════════════════
-# DATABASE MANAGER — Container Initialization
+# DB CONNECTION
 # ═════════════════════════════════════════════════════════════════
 
-class ContainerManager:
-    """مدير الحاويات — إنشاء وصيانة الجداول"""
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
+# ═════════════════════════════════════════════════════════════════
+# SCHEMA REGISTRY — All tables defined here
+# ═════════════════════════════════════════════════════════════════
+
+class SchemaRegistry:
     @staticmethod
-    def get_connection():
-        return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    def get_current_schema() -> SchemaDef:
+        users_table = TableDef(
+            name="users",
+            description="Users basic data",
+            columns=[
+                ColumnDef(name="id", type=SQLType.SERIAL, primary_key=True, nullable=False),
+                ColumnDef(name="email", type=SQLType.STRING, length=255, nullable=False, unique=True),
+                ColumnDef(name="username", type=SQLType.STRING, length=100, unique=True),
+                ColumnDef(name="password_hash", type=SQLType.STRING, length=255, nullable=False),
+                ColumnDef(name="full_name", type=SQLType.STRING, length=255),
+                ColumnDef(name="role", type=SQLType.STRING, length=50, default="user"),
+                ColumnDef(name="status", type=SQLType.STRING, length=50, default="active"),
+                ColumnDef(name="email_verified", type=SQLType.BOOLEAN, default=False),
+                ColumnDef(name="created_at", type=SQLType.TIMESTAMP, default="CURRENT_TIMESTAMP"),
+                ColumnDef(name="updated_at", type=SQLType.TIMESTAMP, default="CURRENT_TIMESTAMP"),
+            ],
+            indexes=[
+                {"columns": ["email"], "name": "idx_users_email"},
+                {"columns": ["username"], "name": "idx_users_username"},
+                {"columns": ["status"], "name": "idx_users_status"},
+                {"columns": ["role"], "name": "idx_users_role"},
+            ]
+        )
 
-    @staticmethod
-    def init_containers():
-        """تهيئة جميع الحاويات"""
-        conn = ContainerManager.get_connection()
+        sessions_table = TableDef(
+            name="sessions",
+            description="Active login sessions",
+            columns=[
+                ColumnDef(name="id", type=SQLType.SERIAL, primary_key=True, nullable=False),
+                ColumnDef(name="user_id", type=SQLType.INTEGER, nullable=False, references="users.id", on_delete="CASCADE"),
+                ColumnDef(name="token", type=SQLType.STRING, length=500, nullable=False, unique=True),
+                ColumnDef(name="device_info", type=SQLType.STRING, length=255),
+                ColumnDef(name="browser", type=SQLType.STRING, length=255),
+                ColumnDef(name="os_info", type=SQLType.STRING, length=255),
+                ColumnDef(name="ip_address", type=SQLType.INET),
+                ColumnDef(name="location", type=SQLType.STRING, length=255),
+                ColumnDef(name="status", type=SQLType.STRING, length=50, default="active",
+                         check_constraint="status IN ('active', 'expired', 'revoked', 'logged_out')"),
+                ColumnDef(name="login_time", type=SQLType.TIMESTAMP, default="CURRENT_TIMESTAMP"),
+                ColumnDef(name="last_activity", type=SQLType.TIMESTAMP, default="CURRENT_TIMESTAMP"),
+                ColumnDef(name="expires_at", type=SQLType.TIMESTAMP, nullable=False),
+                ColumnDef(name="logout_time", type=SQLType.TIMESTAMP),
+            ],
+            indexes=[
+                {"columns": ["token"], "name": "idx_sessions_token"},
+                {"columns": ["user_id"], "name": "idx_sessions_user"},
+                {"columns": ["status"], "name": "idx_sessions_status"},
+                {"columns": ["expires_at"], "name": "idx_sessions_expires"},
+            ]
+        )
+
+        login_logs_table = TableDef(
+            name="login_logs",
+            description="All login attempts log",
+            columns=[
+                ColumnDef(name="id", type=SQLType.SERIAL, primary_key=True, nullable=False),
+                ColumnDef(name="user_id", type=SQLType.INTEGER, references="users.id", on_delete="SET NULL"),
+                ColumnDef(name="email_attempted", type=SQLType.STRING, length=255, nullable=False),
+                ColumnDef(name="status", type=SQLType.STRING, length=50, nullable=False,
+                         check_constraint="status IN ('success', 'failed', 'suspicious', 'blocked')"),
+                ColumnDef(name="ip_address", type=SQLType.INET),
+                ColumnDef(name="device_info", type=SQLType.STRING, length=255),
+                ColumnDef(name="browser", type=SQLType.STRING, length=255),
+                ColumnDef(name="os_info", type=SQLType.STRING, length=255),
+                ColumnDef(name="location", type=SQLType.STRING, length=255),
+                ColumnDef(name="failure_reason", type=SQLType.STRING, length=255),
+                ColumnDef(name="session_token", type=SQLType.STRING, length=500),
+                ColumnDef(name="attempt_time", type=SQLType.TIMESTAMP, default="CURRENT_TIMESTAMP"),
+                ColumnDef(name="risk_score", type=SQLType.INTEGER, default=0,
+                         check_constraint="risk_score BETWEEN 0 AND 100"),
+            ],
+            indexes=[
+                {"columns": ["user_id"], "name": "idx_logs_user"},
+                {"columns": ["email_attempted"], "name": "idx_logs_email"},
+                {"columns": ["attempt_time"], "name": "idx_logs_time"},
+                {"columns": ["ip_address"], "name": "idx_logs_ip"},
+                {"columns": ["status"], "name": "idx_logs_status"},
+            ]
+        )
+
+        return SchemaDef(
+            version="2.2.1",
+            tables=[users_table, sessions_table, login_logs_table]
+        )
+
+# ═════════════════════════════════════════════════════════════════
+# MIGRATION ENGINE
+# ═════════════════════════════════════════════════════════════════
+
+MIGRATIONS_TABLE = "__migrations__"
+SCHEMA_VERSION_TABLE = "__schema_version__"
+
+class MigrationEngine:
+    def __init__(self, db_url: str = DATABASE_URL):
+        self.db_url = db_url
+        self._init_migration_tables()
+
+    def _get_connection(self):
+        return psycopg2.connect(self.db_url, cursor_factory=RealDictCursor)
+
+    def _init_migration_tables(self):
+        conn = self._get_connection()
         cursor = conn.cursor()
-
-        # ── Container 1: users (البيانات الأساسية) ──
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id              SERIAL PRIMARY KEY,
-                email           VARCHAR(255) UNIQUE NOT NULL,
-                username        VARCHAR(100) UNIQUE,
-                password_hash   VARCHAR(255) NOT NULL,
-                full_name       VARCHAR(255),
-                role            VARCHAR(50) DEFAULT 'user',
-                status          VARCHAR(50) DEFAULT 'active',
-                email_verified  BOOLEAN DEFAULT FALSE,
-                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {MIGRATIONS_TABLE} (
+                id SERIAL PRIMARY KEY,
+                version VARCHAR(50) NOT NULL,
+                schema_hash VARCHAR(32) NOT NULL,
+                description TEXT,
+                sql_commands TEXT NOT NULL,
+                tables_affected TEXT[],
+                backup_info JSONB,
+                executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                duration_ms INTEGER,
+                status VARCHAR(20) DEFAULT 'success',
+                error_message TEXT
             )
         """)
-
-        # ── Container 2: sessions (جلسات تسجيل الدخول) ──
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS sessions (
-                id              SERIAL PRIMARY KEY,
-                user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                token           VARCHAR(500) UNIQUE NOT NULL,
-                device_info     VARCHAR(255),
-                browser         VARCHAR(255),
-                os_info         VARCHAR(255),
-                ip_address      VARCHAR(45),
-                location        VARCHAR(255),
-                status          VARCHAR(50) DEFAULT 'active',
-                login_time      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_activity   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                expires_at      TIMESTAMP NOT NULL,
-                logout_time     TIMESTAMP,
-
-                CONSTRAINT valid_status CHECK (status IN ('active', 'expired', 'revoked', 'logged_out'))
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {SCHEMA_VERSION_TABLE} (
+                id SERIAL PRIMARY KEY,
+                version VARCHAR(50) NOT NULL,
+                schema_hash VARCHAR(32) NOT NULL,
+                tables TEXT[],
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_current BOOLEAN DEFAULT TRUE
             )
         """)
-
-        # ── Container 3: login_logs (سجل كل محاولات الدخول) ──
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS login_logs (
-                id              SERIAL PRIMARY KEY,
-                user_id         INTEGER REFERENCES users(id) ON DELETE SET NULL,
-                email_attempted VARCHAR(255) NOT NULL,
-                status          VARCHAR(50) NOT NULL,
-                ip_address      VARCHAR(45),
-                device_info     VARCHAR(255),
-                browser         VARCHAR(255),
-                os_info         VARCHAR(255),
-                location        VARCHAR(255),
-                failure_reason  VARCHAR(255),
-                session_token   VARCHAR(500),
-                attempt_time    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                risk_score      INTEGER DEFAULT 0 CHECK (risk_score BETWEEN 0 AND 100),
-
-                CONSTRAINT valid_log_status CHECK (status IN ('success', 'failed', 'suspicious', 'blocked'))
-            )
-        """)
-
-        # ── Indexes for performance ──
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_user ON login_logs(user_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_email ON login_logs(email_attempted)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_time ON login_logs(attempt_time)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_ip ON login_logs(ip_address)")
-
         conn.commit()
         cursor.close()
         conn.close()
-        print("✅ All containers initialized successfully")
-        return True
+
+    def get_current_schema_version(self) -> Optional[Dict]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT * FROM {SCHEMA_VERSION_TABLE} WHERE is_current = TRUE ORDER BY applied_at DESC LIMIT 1")
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        return dict(result) if result else None
+
+    def get_table_schema(self, table_name: str) -> List[Dict]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT column_name, data_type, is_nullable, column_default, character_maximum_length
+            FROM information_schema.columns WHERE table_name = %s ORDER BY ordinal_position
+        """, (table_name,))
+        columns = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return [dict(c) for c in columns]
+
+    def detect_changes(self, new_schema: SchemaDef) -> List[Dict]:
+        changes = []
+        for table in new_schema.tables:
+            existing = self.get_table_schema(table.name)
+            if not existing:
+                changes.append({
+                    "type": "CREATE_TABLE",
+                    "table": table.name,
+                    "sql": table.to_create_sql(),
+                    "indexes": table.to_index_sql()
+                })
+            else:
+                existing_cols = {c["column_name"]: c for c in existing}
+                for col in table.columns:
+                    if col.name not in existing_cols:
+                        changes.append({
+                            "type": "ADD_COLUMN",
+                            "table": table.name,
+                            "column": col.name,
+                            "sql": f'ALTER TABLE {table.name} ADD COLUMN IF NOT EXISTS {col.to_sql()}',
+                            "column_def": col
+                        })
+                    else:
+                        existing_col = existing_cols[col.name]
+                        existing_type = existing_col["data_type"]
+                        new_type = col.type.value.lower()
+                        if existing_type != new_type and not (
+                            existing_type == "character varying" and new_type == "varchar" or
+                            existing_type == "timestamp without time zone" and new_type == "timestamp"
+                        ):
+                            changes.append({
+                                "type": "ALTER_COLUMN",
+                                "table": table.name,
+                                "column": col.name,
+                                "old_type": existing_type,
+                                "new_type": new_type,
+                                "sql": f'ALTER TABLE {table.name} ALTER COLUMN "{col.name}" TYPE {col.type.value}',
+                                "warning": "Type change may cause data loss!"
+                            })
+                        existing_nullable = existing_col["is_nullable"] == "YES"
+                        if existing_nullable != col.nullable:
+                            null_sql = "SET NOT NULL" if not col.nullable else "DROP NOT NULL"
+                            changes.append({
+                                "type": "ALTER_NULLABLE",
+                                "table": table.name,
+                                "column": col.name,
+                                "sql": f'ALTER TABLE {table.name} ALTER COLUMN "{col.name}" {null_sql}'
+                            })
+                for existing_col_name in existing_cols:
+                    if not table.get_column(existing_col_name):
+                        changes.append({
+                            "type": "REMOVE_COLUMN_WARNING",
+                            "table": table.name,
+                            "column": existing_col_name,
+                            "warning": f"Column '{existing_col_name}' exists in DB but not in schema. Manual removal required.",
+                            "sql": f"-- WARNING: Manual removal required"
+                        })
+        return changes
+
+    def generate_migration_sql(self, changes: List[Dict]) -> tuple:
+        sql_commands = []
+        tables_affected = []
+        for change in changes:
+            if change["type"] == "CREATE_TABLE":
+                sql_commands.append(change["sql"])
+                sql_commands.extend(change.get("indexes", []))
+                tables_affected.append(change["table"])
+            elif change["type"] in ["ADD_COLUMN", "ALTER_COLUMN", "ALTER_NULLABLE"]:
+                sql_commands.append(change["sql"])
+                if change["table"] not in tables_affected:
+                    tables_affected.append(change["table"])
+            elif change["type"] == "REMOVE_COLUMN_WARNING":
+                sql_commands.append(f"-- {change['warning']}")
+        return ";\n".join(sql_commands), tables_affected
+
+    def backup_table(self, table_name: str) -> str:
+        backup_name = f"{table_name}_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(f"CREATE TABLE {backup_name} AS SELECT * FROM {table_name}")
+            conn.commit()
+            cursor.close()
+            conn.close()
+            return backup_name
+        except Exception as e:
+            conn.rollback()
+            cursor.close()
+            conn.close()
+            return f"FAILED: {str(e)}"
+
+    def execute_migration(self, new_schema: SchemaDef, description: str = "") -> Dict:
+        start_time = datetime.now()
+        changes = self.detect_changes(new_schema)
+        if not changes:
+            return {"success": True, "message": "No changes detected. Schema is up to date.", "changes": [], "duration_ms": 0}
+
+        migration_sql, tables_affected = self.generate_migration_sql(changes)
+        backups = {}
+        for table in tables_affected:
+            if any(c["type"] != "CREATE_TABLE" for c in changes if c.get("table") == table):
+                backups[table] = self.backup_table(table)
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            for sql in migration_sql.split(";\n"):
+                sql = sql.strip()
+                if sql and not sql.startswith("--"):
+                    cursor.execute(sql)
+            conn.commit()
+
+            duration = int((datetime.now() - start_time).total_seconds() * 1000)
+            schema_hash = new_schema.to_hash()
+
+            cursor.execute(f"""
+                INSERT INTO {MIGRATIONS_TABLE}
+                (version, schema_hash, description, sql_commands, tables_affected, backup_info, duration_ms, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (new_schema.version, schema_hash, description or f"Auto-migration to {new_schema.version}",
+                  migration_sql, tables_affected, json.dumps(backups), duration, "success"))
+
+            cursor.execute(f"UPDATE {SCHEMA_VERSION_TABLE} SET is_current = FALSE")
+            cursor.execute(f"""
+                INSERT INTO {SCHEMA_VERSION_TABLE} (version, schema_hash, tables, is_current)
+                VALUES (%s, %s, %s, TRUE)
+            """, (new_schema.version, schema_hash, tables_affected))
+            conn.commit()
+
+            result = {
+                "success": True, "message": "Migration completed successfully",
+                "version": new_schema.version, "schema_hash": schema_hash,
+                "changes_count": len(changes), "changes": changes,
+                "tables_affected": tables_affected, "backups": backups,
+                "duration_ms": duration, "sql_executed": migration_sql
+            }
+        except Exception as e:
+            conn.rollback()
+            duration = int((datetime.now() - start_time).total_seconds() * 1000)
+            cursor.execute(f"""
+                INSERT INTO {MIGRATIONS_TABLE}
+                (version, schema_hash, description, sql_commands, tables_affected, duration_ms, status, error_message)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (new_schema.version, new_schema.to_hash(), f"FAILED: Auto-migration to {new_schema.version}",
+                  migration_sql, tables_affected, duration, "failed", str(e)))
+            conn.commit()
+            result = {"success": False, "error": str(e), "version": new_schema.version, "changes": changes, "sql_attempted": migration_sql}
+        finally:
+            cursor.close()
+            conn.close()
+        return result
+
+    def get_migration_history(self, limit: int = 50) -> List[Dict]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT * FROM {MIGRATIONS_TABLE} ORDER BY executed_at DESC LIMIT %s", (limit,))
+        results = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return [dict(r) for r in results]
+
+    def rollback_migration(self, migration_id: int) -> Dict:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT * FROM {MIGRATIONS_TABLE} WHERE id = %s", (migration_id,))
+        migration = cursor.fetchone()
+        if not migration:
+            return {"success": False, "error": "Migration not found"}
+        backups = json.loads(migration["backup_info"] or "{}")
+        restored = []
+        for table, backup in backups.items():
+            if not backup.startswith("FAILED"):
+                cursor.execute(f"DROP TABLE IF EXISTS {table}")
+                cursor.execute(f"ALTER TABLE {backup} RENAME TO {table}")
+                restored.append(table)
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return {"success": True, "message": f"Rollback completed for migration {migration_id}", "restored_tables": restored}
 
 # ═════════════════════════════════════════════════════════════════
-# USER CONTAINER OPERATIONS
+# CONTAINER MANAGER — Initialize all tables
+# ═════════════════════════════════════════════════════════════════
+
+class ContainerManager:
+    @staticmethod
+    def init_containers():
+        """Initialize all tables using the schema registry"""
+        schema = SchemaRegistry.get_current_schema()
+        engine = MigrationEngine()
+        result = engine.execute_migration(schema, "Container initialization")
+        return result
+
+# ═════════════════════════════════════════════════════════════════
+# USER OPERATIONS
 # ═════════════════════════════════════════════════════════════════
 
 class UserContainerOps:
-    """عمليات حاوية المستخدمين"""
-
     @staticmethod
-    def create(email: str, password: str, username: str = None, 
-                 full_name: str = None, role: str = "user") -> Optional[Dict]:
-        """إنشاء مستخدم جديد"""
-        conn = ContainerManager.get_connection()
+    def create(email: str, password: str, username: str = None, full_name: str = None, role: str = "user") -> Optional[Dict]:
+        conn = get_db_connection()
         cursor = conn.cursor()
         try:
             hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
@@ -222,8 +535,7 @@ class UserContainerOps:
 
     @staticmethod
     def get_by_email(email: str) -> Optional[Dict]:
-        """البحث بالبريد"""
-        conn = ContainerManager.get_connection()
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
         user = cursor.fetchone()
@@ -233,7 +545,6 @@ class UserContainerOps:
 
     @staticmethod
     def verify_password(email: str, password: str) -> Optional[Dict]:
-        """التحقق من كلمة المرور"""
         user = UserContainerOps.get_by_email(email)
         if not user:
             return None
@@ -242,19 +553,8 @@ class UserContainerOps:
         return None
 
     @staticmethod
-    def update_status(user_id: int, status: str):
-        """تحديث حالة المستخدم"""
-        conn = ContainerManager.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET status = %s, updated_at = %s WHERE id = %s",
-                      (status, datetime.now(), user_id))
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-    @staticmethod
     def count() -> int:
-        conn = ContainerManager.get_connection()
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) as c FROM users")
         result = cursor.fetchone()["c"]
@@ -263,59 +563,44 @@ class UserContainerOps:
         return result
 
 # ═════════════════════════════════════════════════════════════════
-# SESSION CONTAINER OPERATIONS
+# SESSION OPERATIONS
 # ═════════════════════════════════════════════════════════════════
 
 class SessionContainerOps:
-    """عمليات حاوية الجلسات — بيانات تسجيل الدخول فقط"""
-
     @staticmethod
     def _parse_user_agent(user_agent: str) -> Dict[str, str]:
-        """تحليل معلومات الجهاز من User-Agent"""
         device = "Unknown"
         browser = "Unknown"
         os_info = "Unknown"
-
         if user_agent:
             ua = user_agent.lower()
-            # Browser detection
             if "chrome" in ua: browser = "Chrome"
             elif "firefox" in ua: browser = "Firefox"
             elif "safari" in ua: browser = "Safari"
             elif "edge" in ua: browser = "Edge"
             elif "opera" in ua: browser = "Opera"
-
-            # OS detection
             if "windows" in ua: os_info = "Windows"
             elif "mac" in ua: os_info = "macOS"
             elif "linux" in ua: os_info = "Linux"
             elif "android" in ua: os_info = "Android"
             elif "iphone" in ua or "ipad" in ua: os_info = "iOS"
-
-            # Device type
             if "mobile" in ua: device = "Mobile"
             elif "tablet" in ua: device = "Tablet"
             else: device = "Desktop"
-
         return {"device": device, "browser": browser, "os": os_info}
 
     @staticmethod
-    def create(user_id: int, ip_address: str = None, user_agent: str = None,
-               location: str = None, expires_hours: int = 24) -> Dict:
-        """إنشاء جلسة جديدة"""
+    def create(user_id: int, ip_address: str = None, user_agent: str = None, location: str = None, expires_hours: int = 24) -> Dict:
         token = secrets.token_urlsafe(32)
         expires = datetime.now() + timedelta(hours=expires_hours)
         device_data = SessionContainerOps._parse_user_agent(user_agent)
-
-        conn = ContainerManager.get_connection()
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO sessions (user_id, token, device_info, browser, os_info, 
-                                ip_address, location, expires_at)
+            INSERT INTO sessions (user_id, token, device_info, browser, os_info, ip_address, location, expires_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
-        """, (user_id, token, device_data["device"], device_data["browser"],
-              device_data["os"], ip_address, location, expires))
+        """, (user_id, token, device_data["device"], device_data["browser"], device_data["os"], ip_address, location, expires))
         session = cursor.fetchone()
         conn.commit()
         cursor.close()
@@ -324,13 +609,11 @@ class SessionContainerOps:
 
     @staticmethod
     def get_by_token(token: str) -> Optional[Dict]:
-        """الحصول على جلسة حسب التوكن"""
-        conn = ContainerManager.get_connection()
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("""
             SELECT s.*, u.email, u.username, u.full_name, u.role
-            FROM sessions s
-            JOIN users u ON s.user_id = u.id
+            FROM sessions s JOIN users u ON s.user_id = u.id
             WHERE s.token = %s AND s.status = 'active' AND s.expires_at > %s
         """, (token, datetime.now()))
         session = cursor.fetchone()
@@ -339,204 +622,55 @@ class SessionContainerOps:
         return dict(session) if session else None
 
     @staticmethod
-    def update_activity(token: str):
-        """تحديث آخر نشاط"""
-        conn = ContainerManager.get_connection()
+    def logout(token: str):
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("""
-            UPDATE sessions SET last_activity = %s WHERE token = %s
-        """, (datetime.now(), token))
+        cursor.execute("UPDATE sessions SET status = 'logged_out', logout_time = %s WHERE token = %s", (datetime.now(), token))
         conn.commit()
         cursor.close()
         conn.close()
 
     @staticmethod
-    def logout(token: str, reason: str = "user_logout"):
-        """تسجيل خروج — حفظ وقت الخروج"""
-        conn = ContainerManager.get_connection()
+    def cleanup_expired():
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("""
-            UPDATE sessions 
-            SET status = 'logged_out', logout_time = %s 
-            WHERE token = %s
-        """, (datetime.now(), token))
+        cursor.execute("UPDATE sessions SET status = 'expired' WHERE status = 'active' AND expires_at < %s", (datetime.now(),))
         conn.commit()
         cursor.close()
         conn.close()
-
-    @staticmethod
-    def revoke_all_user_sessions(user_id: int, reason: str = "security"):
-        """إلغاء جميع جلسات المستخدم"""
-        conn = ContainerManager.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            UPDATE sessions 
-            SET status = 'revoked', logout_time = %s 
-            WHERE user_id = %s AND status = 'active'
-        """, (datetime.now(), user_id))
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-    @staticmethod
-    def get_user_sessions(user_id: int) -> List[Dict]:
-        """جميع جلسات المستخدم"""
-        conn = ContainerManager.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM sessions WHERE user_id = %s ORDER BY login_time DESC
-        """, (user_id,))
-        sessions = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        return [dict(s) for s in sessions]
 
     @staticmethod
     def count_active() -> int:
-        conn = ContainerManager.get_connection()
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT COUNT(*) as c FROM sessions 
-            WHERE status = 'active' AND expires_at > %s
-        """, (datetime.now(),))
+        cursor.execute("SELECT COUNT(*) as c FROM sessions WHERE status = 'active' AND expires_at > %s", (datetime.now(),))
         result = cursor.fetchone()["c"]
         cursor.close()
         conn.close()
         return result
 
-    @staticmethod
-    def cleanup_expired():
-        """تنظيف الجلسات المنتهية"""
-        conn = ContainerManager.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            UPDATE sessions 
-            SET status = 'expired' 
-            WHERE status = 'active' AND expires_at < %s
-        """, (datetime.now(),))
-        conn.commit()
-        cursor.close()
-        conn.close()
-
 # ═════════════════════════════════════════════════════════════════
-# LOGIN LOG CONTAINER OPERATIONS
+# LOGIN LOG OPERATIONS
 # ═════════════════════════════════════════════════════════════════
 
 class LoginLogContainerOps:
-    """عمليات حاوية سجل الدخول — كل محاولات الدخول"""
-
     @staticmethod
-    def _calculate_risk_score(email: str, ip: str, status: str, 
-                               recent_attempts: int) -> int:
-        """حساب درجة الخطورة"""
-        score = 0
-        if status == "failed":
-            score += 20
-        if recent_attempts > 3:
-            score += 30
-        if recent_attempts > 5:
-            score += 40
-        return min(score, 100)
-
-    @staticmethod
-    def log_attempt(email: str, status: str, user_id: int = None,
-                    ip_address: str = None, user_agent: str = None,
-                    location: str = None, failure_reason: str = None,
-                    session_token: str = None):
-        """تسجيل محاولة دخول"""
+    def log_attempt(email: str, status: str, user_id: int = None, ip_address: str = None, user_agent: str = None,
+                    location: str = None, failure_reason: str = None, session_token: str = None):
         device_data = SessionContainerOps._parse_user_agent(user_agent)
-
-        # Count recent attempts from this IP
-        conn = ContainerManager.get_connection()
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT COUNT(*) as c FROM login_logs 
-            WHERE ip_address = %s AND attempt_time > %s
-        """, (ip_address, datetime.now() - timedelta(hours=1)))
-        recent = cursor.fetchone()["c"]
-
-        risk = LoginLogContainerOps._calculate_risk_score(
-            email, ip_address, status, recent
-        )
-
-        cursor.execute("""
-            INSERT INTO login_logs (user_id, email_attempted, status, ip_address,
-                                   device_info, browser, os_info, location,
-                                   failure_reason, session_token, risk_score)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (user_id, email, status, ip_address, device_data["device"],
-              device_data["browser"], device_data["os"], location,
-              failure_reason, session_token, risk))
+            INSERT INTO login_logs (user_id, email_attempted, status, ip_address, device_info, browser, os_info, location, failure_reason, session_token)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (user_id, email, status, ip_address, device_data["device"], device_data["browser"], device_data["os"], location, failure_reason, session_token))
         conn.commit()
         cursor.close()
         conn.close()
 
     @staticmethod
-    def get_user_history(user_id: int, limit: int = 50) -> List[Dict]:
-        """سجل دخول المستخدم"""
-        conn = ContainerManager.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM login_logs 
-            WHERE user_id = %s 
-            ORDER BY attempt_time DESC 
-            LIMIT %s
-        """, (user_id, limit))
-        logs = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        return [dict(l) for l in logs]
-
-    @staticmethod
-    def get_recent_suspicious(limit: int = 20) -> List[Dict]:
-        """محاولات مشبوهة"""
-        conn = ContainerManager.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM login_logs 
-            WHERE status IN ('failed', 'suspicious', 'blocked') 
-               OR risk_score > 50
-            ORDER BY attempt_time DESC 
-            LIMIT %s
-        """, (limit,))
-        logs = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        return [dict(l) for l in logs]
-
-    @staticmethod
-    def get_stats() -> Dict:
-        """إحصائيات الدخول"""
-        conn = ContainerManager.get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("SELECT COUNT(*) as c FROM login_logs WHERE status = 'success'")
-        success = cursor.fetchone()["c"]
-
-        cursor.execute("SELECT COUNT(*) as c FROM login_logs WHERE status = 'failed'")
-        failed = cursor.fetchone()["c"]
-
-        cursor.execute("SELECT COUNT(*) as c FROM login_logs WHERE status = 'suspicious'")
-        suspicious = cursor.fetchone()["c"]
-
-        cursor.execute("SELECT COUNT(*) as c FROM login_logs WHERE attempt_time > %s",
-                      (datetime.now() - timedelta(hours=24),))
-        last_24h = cursor.fetchone()["c"]
-
-        cursor.close()
-        conn.close()
-
-        return {
-            "total_success": success,
-            "total_failed": failed,
-            "total_suspicious": suspicious,
-            "last_24h_attempts": last_24h,
-            "success_rate": round(success / (success + failed) * 100, 2) if (success + failed) > 0 else 0
-        }
-
-    @staticmethod
     def count() -> int:
-        conn = ContainerManager.get_connection()
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) as c FROM login_logs")
         result = cursor.fetchone()["c"]
@@ -545,284 +679,85 @@ class LoginLogContainerOps:
         return result
 
 # ═════════════════════════════════════════════════════════════════
-# AUTHENTICATION SERVICE — Uses Container System
+# AUTH SERVICE
 # ═════════════════════════════════════════════════════════════════
 
 class AuthService:
-    """خدمة المصادقة — تستخدم نظام الحاويات"""
-
     @staticmethod
-    def register(email: str, password: str, username: str = None,
-                 full_name: str = None, ip: str = None, user_agent: str = None) -> Dict:
-        """تسجيل مستخدم جديد"""
-        # Create user
+    def register(email: str, password: str, username: str = None, full_name: str = None, ip: str = None, user_agent: str = None) -> Dict:
         user = UserContainerOps.create(email, password, username, full_name)
         if not user:
-            # Log failed registration attempt
-            LoginLogContainerOps.log_attempt(
-                email=email, status="failed", ip_address=ip,
-                user_agent=user_agent, failure_reason="Email already exists"
-            )
+            LoginLogContainerOps.log_attempt(email=email, status="failed", ip_address=ip, user_agent=user_agent, failure_reason="Email already exists")
             return {"success": False, "error": "Email already registered"}
-
-        # Log success
-        LoginLogContainerOps.log_attempt(
-            email=email, status="success", user_id=user["id"],
-            ip_address=ip, user_agent=user_agent
-        )
-
-        # Create session
-        session = SessionContainerOps.create(
-            user_id=user["id"], ip_address=ip, user_agent=user_agent
-        )
-
-        return {
-            "success": True,
-            "user": user,
-            "token": session["token"]
-        }
+        LoginLogContainerOps.log_attempt(email=email, status="success", user_id=user["id"], ip_address=ip, user_agent=user_agent)
+        session = SessionContainerOps.create(user_id=user["id"], ip_address=ip, user_agent=user_agent)
+        return {"success": True, "user": user, "token": session["token"]}
 
     @staticmethod
-    def login(email: str, password: str, ip: str = None, 
-              user_agent: str = None, location: str = None) -> Dict:
-        """تسجيل الدخول"""
-        # Verify user
+    def login(email: str, password: str, ip: str = None, user_agent: str = None, location: str = None) -> Dict:
         user = UserContainerOps.verify_password(email, password)
-
         if not user:
-            LoginLogContainerOps.log_attempt(
-                email=email, status="failed", ip_address=ip,
-                user_agent=user_agent, location=location,
-                failure_reason="Invalid credentials"
-            )
+            LoginLogContainerOps.log_attempt(email=email, status="failed", ip_address=ip, user_agent=user_agent, location=location, failure_reason="Invalid credentials")
             return {"success": False, "error": "Invalid email or password"}
-
-        # Check user status
         if user["status"] != "active":
-            LoginLogContainerOps.log_attempt(
-                email=email, status="blocked", user_id=user["id"],
-                ip_address=ip, user_agent=user_agent, location=location,
-                failure_reason=f"Account is {user['status']}"
-            )
+            LoginLogContainerOps.log_attempt(email=email, status="blocked", user_id=user["id"], ip_address=ip, user_agent=user_agent, location=location, failure_reason=f"Account is {user['status']}")
             return {"success": False, "error": f"Account is {user['status']}"}
-
-        # Create session
-        session = SessionContainerOps.create(
-            user_id=user["id"], ip_address=ip, user_agent=user_agent,
-            location=location
-        )
-
-        # Log successful login
-        LoginLogContainerOps.log_attempt(
-            email=email, status="success", user_id=user["id"],
-            ip_address=ip, user_agent=user_agent, location=location,
-            session_token=session["token"]
-        )
-
-        return {
-            "success": True,
-            "user": {
-                "id": user["id"],
-                "email": user["email"],
-                "username": user["username"],
-                "full_name": user["full_name"],
-                "role": user["role"]
-            },
-            "token": session["token"],
-            "session": {
-                "device": session["device_info"],
-                "browser": session["browser"],
-                "os": session["os_info"],
-                "expires": session["expires_at"].isoformat() if session["expires_at"] else None
-            }
-        }
+        session = SessionContainerOps.create(user_id=user["id"], ip_address=ip, user_agent=user_agent, location=location)
+        LoginLogContainerOps.log_attempt(email=email, status="success", user_id=user["id"], ip_address=ip, user_agent=user_agent, location=location, session_token=session["token"])
+        return {"success": True, "user": {"id": user["id"], "email": user["email"], "username": user["username"], "full_name": user["full_name"], "role": user["role"]}, "token": session["token"]}
 
     @staticmethod
     def logout(token: str, ip: str = None):
-        """تسجيل الخروج"""
         session = SessionContainerOps.get_by_token(token)
         if session:
             SessionContainerOps.logout(token)
-            LoginLogContainerOps.log_attempt(
-                email=session["email"], status="success", user_id=session["user_id"],
-                ip_address=ip, session_token=token, failure_reason="User logout"
-            )
         return {"success": True}
 
     @staticmethod
     def validate_session(token: str) -> Optional[Dict]:
-        """التحقق من صلاحية الجلسة"""
-        session = SessionContainerOps.get_by_token(token)
-        if session:
-            SessionContainerOps.update_activity(token)
-        return session
-
-    @staticmethod
-    def get_login_history(user_id: int) -> List[Dict]:
-        """سجل دخول المستخدم الكامل"""
-        return LoginLogContainerOps.get_user_history(user_id)
-
-    @staticmethod
-    def get_active_sessions(user_id: int) -> List[Dict]:
-        """الجلسات النشطة للمستخدم"""
-        return SessionContainerOps.get_user_sessions(user_id)
-
-    @staticmethod
-    def revoke_all_sessions(user_id: int):
-        """إلغاء جميع الجلسات"""
-        SessionContainerOps.revoke_all_user_sessions(user_id)
-        return {"success": True}
+        return SessionContainerOps.get_by_token(token)
 
 # ═════════════════════════════════════════════════════════════════
 # SYSTEM STATS
 # ═════════════════════════════════════════════════════════════════
 
-def get_container_stats() -> Dict:
-    """إحصائيات نظام الحاويات"""
+def get_system_stats() -> Dict:
     return {
-        "containers": {
-            "users": {
-                "total": UserContainerOps.count(),
-                "description": "بيانات المستخدمين الأساسية"
-            },
-            "sessions": {
-                "active": SessionContainerOps.count_active(),
-                "description": "جلسات تسجيل الدخول النشطة"
-            },
-            "login_logs": {
-                "total": LoginLogContainerOps.count(),
-                "stats": LoginLogContainerOps.get_stats(),
-                "description": "سجل كل محاولات الدخول"
-            }
-        },
-        "system": {
-            "status": "active",
-            "version": "2.1.0",
-            "timestamp": datetime.now().isoformat()
-        }
+        "users": UserContainerOps.count(),
+        "sessions": SessionContainerOps.count_active(),
+        "activities": LoginLogContainerOps.count(),
+        "status": "active",
+        "version": "2.2.1",
+        "timestamp": datetime.now().isoformat()
     }
 
 # ═════════════════════════════════════════════════════════════════
-# FASTAPI ROUTES
+# AUTO-MIGRATE FUNCTION
 # ═════════════════════════════════════════════════════════════════
 
-from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, EmailStr
-from typing import Optional
+def auto_migrate(description: str = "") -> Dict:
+    engine = MigrationEngine()
+    schema = SchemaRegistry.get_current_schema()
+    return engine.execute_migration(schema, description)
 
-auth_router = APIRouter(prefix="/auth", tags=["Authentication"])
-
-class RegisterRequest(BaseModel):
-    email: EmailStr
-    password: str
-    username: Optional[str] = None
-    full_name: Optional[str] = None
-
-class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str
-
-class AuthResponse(BaseModel):
-    success: bool
-    message: str
-    token: Optional[str] = None
-    user: Optional[dict] = None
-
-def get_client_info(request: Request):
+def get_migration_status() -> Dict:
+    engine = MigrationEngine()
+    current = engine.get_current_schema_version()
+    history = engine.get_migration_history(10)
+    schema = SchemaRegistry.get_current_schema()
     return {
-        "ip": request.client.host if request.client else None,
-        "user_agent": request.headers.get("user-agent", ""),
-        "location": request.headers.get("x-forwarded-for", "")
+        "current_version": current["version"] if current else "none",
+        "current_hash": current["schema_hash"] if current else "none",
+        "target_version": schema.version,
+        "target_hash": schema.to_hash(),
+        "needs_update": (current["schema_hash"] if current else "") != schema.to_hash(),
+        "recent_migrations": history,
+        "tables_defined": [t.name for t in schema.tables]
     }
 
-@auth_router.post("/register", response_model=AuthResponse)
-async def register(data: RegisterRequest, request: Request):
-    client = get_client_info(request)
-    if len(data.password) < 6:
-        raise HTTPException(status_code=400, detail="Password too short")
-
-    result = AuthService.register(
-        email=data.email, password=data.password,
-        username=data.username, full_name=data.full_name,
-        ip=client["ip"], user_agent=client["user_agent"]
-    )
-
-    if not result["success"]:
-        raise HTTPException(status_code=400, detail=result["error"])
-
-    return AuthResponse(
-        success=True, message="Registration successful",
-        token=result["token"], user=result["user"]
-    )
-
-@auth_router.post("/login", response_model=AuthResponse)
-async def login(data: LoginRequest, request: Request):
-    client = get_client_info(request)
-    result = AuthService.login(
-        email=data.email, password=data.password,
-        ip=client["ip"], user_agent=client["user_agent"],
-        location=client["location"]
-    )
-
-    if not result["success"]:
-        raise HTTPException(status_code=401, detail=result["error"])
-
-    return AuthResponse(
-        success=True, message="Login successful",
-        token=result["token"], user=result["user"]
-    )
-
-@auth_router.post("/logout")
-async def logout(request: Request):
-    token = request.headers.get("Authorization", "").replace("Bearer ", "")
-    client = get_client_info(request)
-    AuthService.logout(token, ip=client["ip"])
-    return {"success": True, "message": "Logged out"}
-
-@auth_router.get("/me")
-async def get_me(request: Request):
-    token = request.headers.get("Authorization", "").replace("Bearer ", "")
-    session = AuthService.validate_session(token)
-    if not session:
-        raise HTTPException(status_code=401, detail="Invalid session")
-    return {
-        "success": True,
-        "user": {
-            "id": session["user_id"],
-            "email": session["email"],
-            "username": session["username"],
-            "full_name": session["full_name"],
-            "role": session["role"]
-        }
-    }
-
-@auth_router.get("/sessions")
-async def get_sessions(request: Request):
-    token = request.headers.get("Authorization", "").replace("Bearer ", "")
-    session = AuthService.validate_session(token)
-    if not session:
-        raise HTTPException(status_code=401, detail="Invalid session")
-
-    sessions = AuthService.get_active_sessions(session["user_id"])
-    return {"success": True, "sessions": sessions}
-
-@auth_router.get("/history")
-async def get_history(request: Request):
-    token = request.headers.get("Authorization", "").replace("Bearer ", "")
-    session = AuthService.validate_session(token)
-    if not session:
-        raise HTTPException(status_code=401, detail="Invalid session")
-
-    history = AuthService.get_login_history(session["user_id"])
-    return {"success": True, "history": history}
-
-@auth_router.get("/stats")
-async def auth_stats():
-    return get_container_stats()
-
-# Export
+# Export all
 __all__ = [
-    "ContainerManager", "UserContainerOps", "SessionContainerOps",
-    "LoginLogContainerOps", "AuthService", "get_container_stats",
-    "auth_router"
+    "get_db_connection", "ContainerManager", "UserContainerOps", "SessionContainerOps",
+    "LoginLogContainerOps", "AuthService", "get_system_stats", "auto_migrate",
+    "get_migration_status", "MigrationEngine", "SchemaRegistry", "SchemaDef", "TableDef", "ColumnDef", "SQLType"
 ]
