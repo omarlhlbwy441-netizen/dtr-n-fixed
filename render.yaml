@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: dtr-n
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: DATABASE_URL
+        fromDatabase:
+          name: dtr-n-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITHUB_USER
+        value: omarlhlbwy441-netizen
+      - key: GITHUB_REPO
+        value: omarlhlbwy441-netizen/dtr-n
+
+databases:
+  - name: dtr-n-db
+    plan: free
+    ipAllowList: []
