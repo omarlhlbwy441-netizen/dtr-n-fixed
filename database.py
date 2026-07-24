@@ -153,7 +153,22 @@ class SchemaDef:
 # ═════════════════════════════════════════════════════════════════
 
 def get_db_connection():
-    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    db_url = os.getenv("DATABASE_URL", DATABASE_URL)
+    try:
+        if "sslmode" not in db_url and "localhost" not in db_url and "127.0.0.1" not in db_url:
+            if "?" in db_url:
+                db_url += "&sslmode=require"
+            else:
+                db_url += "?sslmode=require"
+        return psycopg2.connect(db_url, cursor_factory=RealDictCursor, connect_timeout=5)
+    except Exception as e:
+        # Fallback without sslmode
+        try:
+            raw_url = os.getenv("DATABASE_URL", DATABASE_URL).split("?")[0]
+            return psycopg2.connect(raw_url, cursor_factory=RealDictCursor, connect_timeout=5)
+        except Exception as e2:
+            print(f"Database connection failed: {e2}")
+            raise e2
 
 # ═════════════════════════════════════════════════════════════════
 # SCHEMA REGISTRY — All tables defined here
