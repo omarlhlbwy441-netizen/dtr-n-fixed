@@ -675,7 +675,18 @@ self_evolve()"></textarea>
             particlesContainer.appendChild(p);
         }
 
-        const API_BASE = '/api';
+        const API_BASE = '';
+        async function fetchAuth(url, options) {
+            try {
+                let res = await fetchAuth('/auth/login'url, options);
+                if (res.status === 404 && !url.startsWith('/api')) {
+                    res = await fetchAuth('/auth/login''/api' + url, options);
+                }
+                return res;
+            } catch(e) {
+                return await fetchAuth('/auth/login''/api' + url, options);
+            }
+        }
         let token = localStorage.getItem('dtrn_token') || '';
         let currentUser = null;
 
@@ -700,7 +711,7 @@ self_evolve()"></textarea>
             }
 
             try {
-                const response = await fetch(`${API_BASE}/auth/login`, {
+                const response = await fetchAuth('/auth/login'`${API_BASE}/auth/login`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ email, password })
@@ -762,7 +773,7 @@ self_evolve()"></textarea>
 
         async function loadDashboard() {
             try {
-                const response = await fetch(`${API_BASE}/resources`, {
+                const response = await fetchAuth('/auth/login'`${API_BASE}/resources`, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 const data = await response.json();
@@ -799,7 +810,7 @@ self_evolve()"></textarea>
         async function startNewSession() {
             log('Starting new session...', 'info');
             try {
-                const response = await fetch(`${API_BASE}/sessions/start`, {
+                const response = await fetchAuth('/auth/login'`${API_BASE}/sessions/start`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -830,7 +841,7 @@ self_evolve()"></textarea>
         async function pushToGitHub() {
             log('Pushing to GitHub...', 'info');
             try {
-                const response = await fetch(`${API_BASE}/github/push`, {
+                const response = await fetchAuth('/auth/login'`${API_BASE}/github/push`, {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
