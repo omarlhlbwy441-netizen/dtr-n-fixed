@@ -25,6 +25,7 @@ from dtr_n.evolution_engine import DTREvolutionEngine, create_engine
 from dtr_n.agents import MultiAgentOrchestrator
 from dtr_n.github_manager import GitHubManager
 from dtr_n.workspace_manager import WorkspaceManager
+from dtr_n.sub_agents import get_coordinator, SubAgentCoordinator
 
 # ─── App Setup ────────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -46,6 +47,7 @@ evolution_engine: DTREvolutionEngine = create_engine()
 orchestrator: MultiAgentOrchestrator = MultiAgentOrchestrator()
 github_mgr: GitHubManager = GitHubManager()
 workspace_mgr: WorkspaceManager = WorkspaceManager()
+sub_coordinator: SubAgentCoordinator = get_coordinator()
 START_TIME = time.time()
 
 # ─── Session Store ────────────────────────────────────────────────────────────
@@ -118,6 +120,21 @@ class PreviewRequest(BaseModel):
     project_path: str
     build_command: Optional[str] = None
     port: Optional[int] = None
+
+
+# ─── Startup / Shutdown ───────────────────────────────────────────────────────
+@app.on_event("startup")
+async def startup():
+    """تشغيل الوكلاء الفرعيين في الخلفية عند بدء التطبيق"""
+    try:
+        sub_coordinator.start_all()
+    except Exception as e:
+        pass  # non-fatal — main app keeps running
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    sub_coordinator.stop_all()
 
 
 # ─── Root & Health ─────────────────────────────────────────────────────────────
@@ -424,6 +441,121 @@ if _DIST.exists():
         if file.exists() and file.is_file():
             return FileResponse(str(file))
         return FileResponse(str(_DIST / "index.html"))
+
+# ─── /api/mobile/* — Mobile App Update Management ────────────────────────────
+
+class MobileCheckRequest(BaseModel):
+    version: str
+    platform: str = "all"
+    device_id: Optional[str] = None
+
+
+class MobileRegisterRequest(BaseModel):
+    device_id: str
+    current_version: str
+    platform: str = "all"
+    app_name: Optional[str] = "DTR-N"
+
+
+@app.get("/api/mobile/update-check")
+async def mobile_update_check(version: str, platform: str = "all"):
+    """
+    فحص تحديثات تطبيق الجوال.
+    يُستخدم من التطبيق عند الإقلاع أو دورياً.
+
+    مثال: GET /api/mobile/update-check?version=2.1.0&platform=android
+    """
+    return sub_coordinator.get_mobile_update_info(version, platform)
+
+
+@app.post("/api/mobile/update-check")
+async def mobile_update_check_post(req: MobileCheckRequest):
+    """نفس فحص التحديثات عبر POST"""
+    result = sub_coordinator.get_mobile_update_info(req.version, req.platform)
+    if req.device_id:
+        sub_coordinator.register_mobile_device(req.device_id, req.version, req.platform)
+    return result
+
+
+@app.post("/api/mobile/register-device")
+async def mobile_register_device(req: MobileRegisterRequest):
+    """تسجيل جهاز جوال ومعرفة ما إذا كان يحتاج تحديثاً"""
+    result = sub_coordinator.register_mobile_device(
+        req.device_id, req.current_version, req.platform
+    )
+    return {
+        "registered": True,
+        "device": result,
+        "update_info": sub_coordinator.get_mobile_update_info(req.current_version, req.platform),
+    }
+
+
+@app.get("/api/mobile/version")
+async def mobile_get_version():
+    """الحصول على الإصدار الحالي والمعلومات الكاملة"""
+    updater = sub_coordinator.mobile_updater
+    return {
+        "current_version": updater.current_version,
+        "min_supported_version": updater.MIN_SUPPORTED_VERSION,
+        "channel": updater.channel,
+        "pending_devices": len(updater.pending_devices),
+        "update_history_count": len(updater.update_history),
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+# ─── /api/sub-agents — Sub-Agent Coordinator ──────────────────────────────────
+
+@app.get("/api/sub-agents")
+async def get_sub_agents():
+    """حالة جميع الوكلاء الفرعيين في الخلفية"""
+    return sub_coordinator.get_status()
+
+
+@app.post("/api/sub-agents/start")
+async def start_sub_agents():
+    """تشغيل الوكلاء الفرعيين يدوياً"""
+    sub_coordinator.start_all()
+    return {"ok": True, "message": "تم تشغيل الوكلاء الفرعيين"}
+
+
+@app.post("/api/sub-agents/stop")
+async def stop_sub_agents():
+    """إيقاف الوكلاء الفرعيين"""
+    sub_coordinator.stop_all()
+    return {"ok": True, "message": "تم إيقاف الوكلاء الفرعيين"}
+
+
+# ─── /api/dtrn/api/* aliases — Add new endpoints to proxy router ──────────────
+
+@_dtrn.get("/api/mobile/update-check")
+async def _dtrn_mobile_check(version: str, platform: str = "all"):
+    return await mobile_update_check(version, platform)
+
+@_dtrn.post("/api/mobile/update-check")
+async def _dtrn_mobile_check_post(req: MobileCheckRequest):
+    return await mobile_update_check_post(req)
+
+@_dtrn.post("/api/mobile/register-device")
+async def _dtrn_mobile_register(req: MobileRegisterRequest):
+    return await mobile_register_device(req)
+
+@_dtrn.get("/api/mobile/version")
+async def _dtrn_mobile_version():
+    return await mobile_get_version()
+
+@_dtrn.get("/api/sub-agents")
+async def _dtrn_sub_agents():
+    return await get_sub_agents()
+
+@_dtrn.post("/api/sub-agents/start")
+async def _dtrn_sub_start():
+    return await start_sub_agents()
+
+@_dtrn.post("/api/sub-agents/stop")
+async def _dtrn_sub_stop():
+    return await stop_sub_agents()
+
 
 # ─── Legacy endpoints (backwards compat) ──────────────────────────────────────
 @app.get("/status")

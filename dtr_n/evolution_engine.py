@@ -18,6 +18,11 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger("dtr-n.evolution")
 
 
+def create_engine(config: dict = None) -> "DTREvolutionEngine":
+    """Factory — ينشئ محرك التطور بالإعدادات المحددة أو بالبيئة"""
+    return DTREvolutionEngine(config=config)
+
+
 class DTREvolutionEngine:
     def __init__(self, config=None):
         self.project_name = "dtr-n"

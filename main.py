@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, EmailStr
 from typing import Optional
+from datetime import datetime
 import os
 
 from database import (
@@ -153,6 +154,97 @@ async def migration_history(limit: int = 50):
     from database import MigrationEngine
     engine = MigrationEngine()
     return {"migrations": engine.get_migration_history(limit)}
+
+# ─── Mobile App Update Function ───────────────────────────────────────────────
+# دالة تحديث نسخة التطبيق على الجوال
+# تُستخدم من تطبيق Flutter/React Native/Expo عند الإقلاع
+
+CURRENT_APP_VERSION = "2.3.0"
+MIN_SUPPORTED_VERSION = "2.0.0"
+MOBILE_UPDATE_CHANNEL = os.getenv("MOBILE_UPDATE_CHANNEL", "stable")
+
+
+def _version_less_than(v1: str, v2: str) -> bool:
+    """مقارنة إصدارين — True إذا كان v1 < v2"""
+    try:
+        p1 = [int(x) for x in (v1 or "0").split(".")]
+        p2 = [int(x) for x in (v2 or "0").split(".")]
+        while len(p1) < 3:
+            p1.append(0)
+        while len(p2) < 3:
+            p2.append(0)
+        return p1 < p2
+    except Exception:
+        return False
+
+
+class MobileUpdateRequest(BaseModel):
+    version: str
+    platform: Optional[str] = "all"
+    device_id: Optional[str] = None
+
+
+@app.get("/api/mobile/update-check")
+@app.get("/mobile/update-check")
+async def mobile_update_check(version: str = "0.0.0", platform: str = "all"):
+    """
+    فحص تحديثات تطبيق الجوال.
+
+    يستدعيه التطبيق عند كل إقلاع أو دورياً للتحقق من وجود إصدار جديد.
+
+    المعاملات:
+    - version : إصدار التطبيق الحالي على الجهاز (مثل 2.1.0)
+    - platform: المنصة (android / ios / all)
+
+    الاستجابة:
+    - has_update    : هل يوجد تحديث؟
+    - force_update  : هل التحديث إجباري؟
+    - latest_version: أحدث إصدار متاح
+    - download_url  : رابط تحميل التحديث
+
+    مثال:
+        GET /api/mobile/update-check?version=2.1.0&platform=android
+    """
+    has_update = _version_less_than(version, CURRENT_APP_VERSION)
+    force_update = _version_less_than(version, MIN_SUPPORTED_VERSION)
+    return {
+        "has_update": has_update,
+        "force_update": force_update,
+        "current_version": version,
+        "latest_version": CURRENT_APP_VERSION,
+        "min_supported_version": MIN_SUPPORTED_VERSION,
+        "channel": MOBILE_UPDATE_CHANNEL,
+        "platform": platform,
+        "release_notes": {
+            "ar": "تحسينات في الأداء، وكلاء فرعيون جدد، إصلاح أخطاء متعددة",
+            "en": "Performance improvements, new background agents, multiple bug fixes"
+        },
+        "download_url": (
+            f"https://github.com/omarlhlbwy441-netizen/dtr-n-fixed"
+            f"/releases/tag/v{CURRENT_APP_VERSION}"
+        ),
+        "changelog_url": "https://github.com/omarlhlbwy441-netizen/dtr-n-fixed/blob/main/CHANGELOG.md",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+@app.post("/api/mobile/update-check")
+@app.post("/mobile/update-check")
+async def mobile_update_check_post(req: MobileUpdateRequest):
+    """فحص التحديث عبر POST — نفس المنطق مع قبول JSON body"""
+    return await mobile_update_check(req.version, req.platform or "all")
+
+
+@app.get("/api/mobile/version")
+async def mobile_get_version():
+    """الحصول على معلومات الإصدار الحالي للتطبيق"""
+    return {
+        "version": CURRENT_APP_VERSION,
+        "min_supported": MIN_SUPPORTED_VERSION,
+        "channel": MOBILE_UPDATE_CHANNEL,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
+
 
 # Health and Root
 @app.get("/health")

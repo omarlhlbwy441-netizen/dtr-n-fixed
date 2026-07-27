@@ -85,6 +85,35 @@ const HTML_PAGES: Record<string, string> = {
   "session-dashboard":  "/session-dashboard",
 };
 
+// ── Mobile update — pass-through to Python ────────────────────────────────────
+// GET  /api/dtrn/mobile/update-check?version=X.Y.Z&platform=android
+// POST /api/dtrn/mobile/update-check   { version, platform, device_id }
+// POST /api/dtrn/mobile/register-device
+// GET  /api/dtrn/mobile/version
+router.get("/dtrn/mobile/update-check", (req, res) =>
+  proxyRequest(req, res, "/api/mobile/update-check")
+);
+router.post("/dtrn/mobile/update-check", (req, res) =>
+  proxyRequest(req, res, "/api/mobile/update-check")
+);
+router.post("/dtrn/mobile/register-device", (req, res) =>
+  proxyRequest(req, res, "/api/mobile/register-device")
+);
+router.get("/dtrn/mobile/version", (req, res) =>
+  proxyRequest(req, res, "/api/mobile/version")
+);
+
+// ── Sub-agents management ──────────────────────────────────────────────────────
+router.get("/dtrn/sub-agents", (req, res) =>
+  proxyRequest(req, res, "/api/sub-agents")
+);
+router.post("/dtrn/sub-agents/start", (req, res) =>
+  proxyRequest(req, res, "/api/sub-agents/start")
+);
+router.post("/dtrn/sub-agents/stop", (req, res) =>
+  proxyRequest(req, res, "/api/sub-agents/stop")
+);
+
 for (const [slug, upstreamPath] of Object.entries(HTML_PAGES)) {
   router.get(`/dtrn${slug ? `/${slug}` : ""}`, (req, res) => {
     proxyRequest(req, res, upstreamPath);
