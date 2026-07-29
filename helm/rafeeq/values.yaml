@@ -1,0 +1,111 @@
+# Rafeeq Kernel Helm Values
+replicaCount: 3
+
+image:
+  repository: ghcr.io/omarlhlbwy441-netizen/dtr-n-fixed
+  pullPolicy: Always
+  tag: "main"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+
+service:
+  type: ClusterIP
+  port: 8000
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: rafeeq.ai
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: rafeeq-tls
+      hosts:
+        - rafeeq.ai
+
+resources:
+  requests:
+    memory: "256Mi"
+    cpu: "250m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+tolerations: []
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - rafeeq
+          topologyKey: kubernetes.io/hostname
+
+env:
+  APP_VERSION: "2.3.0"
+  APP_NAME: "Rafeeq"
+  ENVIRONMENT: "production"
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_REQUESTS: "100"
+  RATE_LIMIT_WINDOW: "60"
+  GITHUB_USER: "omarlhlbwy441-netizen"
+  GITHUB_REPO: "omarlhlbwy441-netizen/dtr-n-fixed"
+
+secrets:
+  DATABASE_URL: "postgresql://dtr_no_user:GRtFA4nVLhnELSi8xTookZyKasr8XoME@dpg-d9dlnlv7f7vs738ugbe0-a/dtr_no"
+  REDIS_URL: "redis://rafeeq-redis:6379/0"
+  SECRET_KEY: "change-me"
+  GITHUB_TOKEN: "change-me"
+
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: 7-alpine
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+  persistence:
+    enabled: true
+    size: 1Gi
