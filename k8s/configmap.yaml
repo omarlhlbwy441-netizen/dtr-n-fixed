@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rafeeq-config
+  namespace: rafeeq
+data:
+  APP_VERSION: "2.3.0"
+  APP_NAME: "Rafeeq"
+  ENVIRONMENT: "production"
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_REQUESTS: "100"
+  RATE_LIMIT_WINDOW: "60"
+  GITHUB_USER: "omarlhlbwy441-netizen"
+  GITHUB_REPO: "omarlhlbwy441-netizen/dtr-n-fixed"
