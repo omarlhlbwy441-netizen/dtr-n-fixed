@@ -1,0 +1,64 @@
+# ═══════════════════════════════════════════════════════════════════
+# Rafeeq Kernel v2.3.0 — Development Docker Compose
+# Lightweight stack for local development
+# ═══════════════════════════════════════════════════════════════════
+
+version: "3.9"
+
+services:
+  postgres-dev:
+    image: postgres:16-alpine
+    container_name: rafeeq-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: rafeeq_dev
+      POSTGRES_USER: rafeeq
+      POSTGRES_PASSWORD: dev_password
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rafeeq"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis-dev:
+    image: redis:7-alpine
+    container_name: rafeeq-redis-dev
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+
+  app-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: rafeeq-app-dev
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://rafeeq:dev_password@postgres-dev:5432/rafeeq_dev
+      - REDIS_URL=redis://redis-dev:6379/0
+      - SECRET_KEY=dev-secret-key-do-not-use-in-production
+      - DEBUG=true
+      - ENVIRONMENT=development
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_USER=omarlhlbwy441-netizen
+      - GITHUB_REPO=omarlhlbwy441-netizen/dtr-n-fixed
+    ports:
+      - "8001:8000"
+    volumes:
+      - .:/app
+      - /app/__pycache__
+    depends_on:
+      postgres-dev:
+        condition: service_healthy
+      redis-dev:
+        condition: service_started
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  postgres_dev_data:
