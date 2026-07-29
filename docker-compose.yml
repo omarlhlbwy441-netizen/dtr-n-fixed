@@ -1,0 +1,203 @@
+# ═══════════════════════════════════════════════════════════════════
+# Rafeeq Kernel v2.3.0 — Production Docker Compose
+# Stack: PostgreSQL + Redis + App + Nginx + Monitoring
+# ═══════════════════════════════════════════════════════════════════
+
+version: "3.9"
+
+services:
+  # ─── PostgreSQL Database ───────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: rafeeq-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: rafeeq
+      POSTGRES_USER: rafeeq
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rafeeq_secure_2026}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rafeeq"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rafeeq-network
+
+  # ─── Redis Cache & Session Store ─────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: rafeeq-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rafeeq-network
+
+  # ─── Rafeeq API Application ────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rafeeq-app
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://rafeeq:${POSTGRES_PASSWORD:-rafeeq_secure_2026}@postgres:5432/rafeeq
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY:-rafeeq-secret-change-me}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_USER=${GITHUB_USER:-omarlhlbwy441-netizen}
+      - GITHUB_REPO=${GITHUB_REPO:-omarlhlbwy441-netizen/dtr-n-fixed}
+      - APP_VERSION=2.3.0
+      - DEBUG=false
+      - ENVIRONMENT=production
+      - RATE_LIMIT_ENABLED=true
+      - RATE_LIMIT_REQUESTS=100
+      - RATE_LIMIT_WINDOW=60
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - rafeeq-network
+
+  # ─── Nginx Reverse Proxy ───────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: rafeeq-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./static:/usr/share/nginx/html/static:ro
+    depends_on:
+      - app
+    networks:
+      - rafeeq-network
+
+  # ─── Prometheus Metrics ────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: rafeeq-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - rafeeq-network
+
+  # ─── Grafana Dashboard ─────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: rafeeq-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-rafeeq_grafana_2026}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=${GRAFANA_URL:-http://localhost:3000}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - rafeeq-network
+
+  # ─── Node Exporter (System Metrics) ────────────────────────────
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: rafeeq-node-exporter
+    restart: unless-stopped
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    ports:
+      - "9100:9100"
+    networks:
+      - rafeeq-network
+
+  # ─── Redis Exporter ────────────────────────────────────────────
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: rafeeq-redis-exporter
+    restart: unless-stopped
+    environment:
+      - REDIS_ADDR=redis://redis:6379
+    ports:
+      - "9121:9121"
+    depends_on:
+      - redis
+    networks:
+      - rafeeq-network
+
+  # ─── PostgreSQL Exporter ───────────────────────────────────────
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: rafeeq-postgres-exporter
+    restart: unless-stopped
+    environment:
+      - DATA_SOURCE_NAME=postgresql://rafeeq:${POSTGRES_PASSWORD:-rafeeq_secure_2026}@postgres:5432/rafeeq?sslmode=disable
+    ports:
+      - "9187:9187"
+    depends_on:
+      - postgres
+    networks:
+      - rafeeq-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  rafeeq-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
