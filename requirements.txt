@@ -16,7 +16,7 @@ python-jose[cryptography]==3.3.0
 
 # ─── HTTP & Async ─────────────────────────────────────────────────
 httpx==0.25.2
-aiofiles==23.2.1
+aiofiles==25.1.0
 
 # ─── Cache (optional — app works without Redis) ───────────────────
 redis==5.0.1
