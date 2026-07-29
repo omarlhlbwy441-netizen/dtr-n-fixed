@@ -1,0 +1,20 @@
+[Unit]
+Description=Rafeeq Kernel API Server
+After=network.target postgresql.service redis.service
+
+[Service]
+Type=simple
+User=rafeeq
+Group=rafeeq
+WorkingDirectory=/opt/rafeeq
+Environment=PATH=/opt/rafeeq/venv/bin
+EnvironmentFile=/opt/rafeeq/.env
+ExecStart=/opt/rafeeq/venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 2
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+KillMode=mixed
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
