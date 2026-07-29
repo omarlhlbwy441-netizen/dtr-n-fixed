@@ -1,0 +1,17 @@
+apiVersion: v2
+name: rafeeq
+description: Rafeeq Kernel — Self-Evolving AI Platform
+type: application
+version: 2.3.0
+appVersion: "2.3.0"
+keywords:
+  - ai
+  - fastapi
+  - multi-agent
+  - self-evolving
+home: https://rafeeq.ai
+sources:
+  - https://github.com/omarlhlbwy441-netizen/dtr-n-fixed
+maintainers:
+  - name: Wolf Digital Kingdom
+    email: admin@rafeeq.ai
