@@ -8,21 +8,46 @@
 import os
 import time
 import psycopg2
-import redis
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse, Response
-from prometheus_client import generate_latest, CONTENT_TYPE_LATEST, Counter, Histogram, Gauge
+from prometheus_client import (
+    generate_latest,
+    CONTENT_TYPE_LATEST,
+    Counter,
+    Histogram,
+    Gauge,
+)
 
 router = APIRouter(prefix="/api/health", tags=["Health"])
 
-# Prometheus metrics
-REQUEST_COUNT = Counter("rafeeq_requests_total", "Total requests", ["method", "endpoint", "status"])
+# ─── Prometheus metrics ───────────────────────────────────────────
+REQUEST_COUNT = Counter(
+    "rafeeq_requests_total", "Total requests", ["method", "endpoint", "status"]
+)
 REQUEST_DURATION = Histogram("rafeeq_request_duration_seconds", "Request duration")
 ACTIVE_SESSIONS = Gauge("rafeeq_active_sessions", "Number of active sessions")
 DB_CONNECTIONS = Gauge("rafeeq_db_connections", "Database connections")
 
-# Connections
-redis_client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+# ─── Redis (optional, lazy) ───────────────────────────────────────
+_redis_client = None
+
+def _get_redis():
+    global _redis_client
+    if _redis_client is not None:
+        return _redis_client
+    redis_url = os.getenv("REDIS_URL", "")
+    if not redis_url:
+        return None
+    try:
+        import redis as redis_lib
+        client = redis_lib.from_url(redis_url, socket_connect_timeout=2, socket_timeout=2)
+        client.ping()
+        _redis_client = client
+        return _redis_client
+    except Exception:
+        return None
+
+
 start_time = time.time()
 
 
@@ -35,7 +60,7 @@ async def health_check():
         "version": "2.3.0",
         "environment": os.getenv("ENVIRONMENT", "production"),
         "uptime_seconds": int(time.time() - start_time),
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
 
 
@@ -55,7 +80,7 @@ async def db_health():
             "status": "healthy",
             "database": "postgresql",
             "users_count": user_count,
-            "response_ms": 0
+            "response_ms": 0,
         }
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Database unhealthy: {str(e)}")
@@ -63,16 +88,25 @@ async def db_health():
 
 @router.get("/redis")
 async def redis_health():
-    """Redis health check"""
+    """Redis health check — returns degraded (not error) when Redis is not configured"""
+    rc = _get_redis()
+    if rc is None:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "degraded",
+                "reason": "Redis not configured (REDIS_URL not set)",
+            },
+        )
     try:
-        redis_client.ping()
-        info = redis_client.info()
+        rc.ping()
+        info = rc.info()
         return {
             "status": "healthy",
             "redis_version": info.get("redis_version"),
             "used_memory_human": info.get("used_memory_human"),
             "connected_clients": info.get("connected_clients"),
-            "uptime_in_seconds": info.get("uptime_in_seconds")
+            "uptime_in_seconds": info.get("uptime_in_seconds"),
         }
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Redis unhealthy: {str(e)}")
@@ -88,7 +122,7 @@ async def github_health():
             return {
                 "status": "healthy" if r.status_code == 200 else "degraded",
                 "github_api_status": r.status_code,
-                "rate_limit_remaining": r.headers.get("x-ratelimit-remaining", "unknown")
+                "rate_limit_remaining": r.headers.get("x-ratelimit-remaining", "unknown"),
             }
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"GitHub API unreachable: {str(e)}")
@@ -103,15 +137,15 @@ async def system_health():
             "status": "healthy",
             "cpu_percent": psutil.cpu_percent(interval=1),
             "memory": {
-                "total_gb": round(psutil.virtual_memory().total / (1024**3), 2),
-                "used_gb": round(psutil.virtual_memory().used / (1024**3), 2),
-                "percent": psutil.virtual_memory().percent
+                "total_gb": round(psutil.virtual_memory().total / (1024 ** 3), 2),
+                "used_gb": round(psutil.virtual_memory().used / (1024 ** 3), 2),
+                "percent": psutil.virtual_memory().percent,
             },
             "disk": {
-                "total_gb": round(psutil.disk_usage("/").total / (1024**3), 2),
-                "used_gb": round(psutil.disk_usage("/").used / (1024**3), 2),
-                "percent": psutil.disk_usage("/").percent
-            }
+                "total_gb": round(psutil.disk_usage("/").total / (1024 ** 3), 2),
+                "used_gb": round(psutil.disk_usage("/").used / (1024 ** 3), 2),
+                "percent": psutil.disk_usage("/").percent,
+            },
         }
     except Exception as e:
         return {"status": "unknown", "error": str(e)}
@@ -125,11 +159,14 @@ async def metrics():
 
 @router.get("/ready")
 async def readiness_check():
-    """Kubernetes readiness probe"""
+    """
+    Readiness probe — only DB is required.
+    Redis is optional; its absence degrades but does not block readiness.
+    """
     checks = {}
     healthy = True
 
-    # Check DB
+    # Required: Database
     try:
         DATABASE_URL = os.getenv("DATABASE_URL")
         conn = psycopg2.connect(DATABASE_URL, connect_timeout=3)
@@ -139,17 +176,23 @@ async def readiness_check():
         checks["database"] = f"not_ready: {str(e)}"
         healthy = False
 
-    # Check Redis
+    # Optional: Redis
     try:
-        redis_client.ping()
-        checks["redis"] = "ready"
+        rc = _get_redis()
+        if rc:
+            rc.ping()
+            checks["redis"] = "ready"
+        else:
+            checks["redis"] = "degraded (not configured)"
     except Exception as e:
-        checks["redis"] = f"not_ready: {str(e)}"
-        healthy = False
+        checks["redis"] = f"degraded: {str(e)}"
+        # Redis failure does NOT mark the service as not ready
 
     if healthy:
         return {"status": "ready", "checks": checks}
-    raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})
+    raise HTTPException(
+        status_code=503, detail={"status": "not_ready", "checks": checks}
+    )
 
 
 @router.get("/live")
