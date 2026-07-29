@@ -1,0 +1,52 @@
+# ═══════════════════════════════════════════════════════════════════
+# Rafeeq Kernel v2.3.0 — Health Monitor
+# Runs every 15 minutes to check production health
+# ═══════════════════════════════════════════════════════════════════
+
+name: Rafeeq Health Monitor
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'  # Every 15 minutes
+  workflow_dispatch:
+
+jobs:
+  health-check:
+    name: ❤️ Health Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check API Health
+        run: |
+          curl -f -s -o /dev/null             -w "Status: %{http_code} | Time: %{time_total}s\n"             "${{ secrets.PRODUCTION_URL }}/api/health" || exit 1
+
+      - name: Check Database
+        run: |
+          curl -f -s -o /dev/null             -w "DB Status: %{http_code}\n"             "${{ secrets.PRODUCTION_URL }}/api/health/db" || exit 1
+
+      - name: Check Redis
+        run: |
+          curl -f -s -o /dev/null             -w "Redis Status: %{http_code}\n"             "${{ secrets.PRODUCTION_URL }}/api/health/redis" || exit 1
+
+      - name: Check GitHub
+        run: |
+          curl -f -s -o /dev/null             -w "GitHub Status: %{http_code}\n"             "${{ secrets.PRODUCTION_URL }}/api/health/github" || exit 1
+
+      - name: Notify on Failure
+        if: failure()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "🚨 Rafeeq health check FAILED at $(date -u +%Y-%m-%dT%H:%M:%SZ)!",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Rafeeq Production Health Check Failed*\nPlease investigate immediately."
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
