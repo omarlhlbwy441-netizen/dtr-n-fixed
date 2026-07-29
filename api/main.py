@@ -26,12 +26,14 @@ from dtr_n.agents import MultiAgentOrchestrator
 from dtr_n.github_manager import GitHubManager
 from dtr_n.workspace_manager import WorkspaceManager
 from dtr_n.sub_agents import get_coordinator, SubAgentCoordinator
+from api.health import router as health_router
+from api.middleware import RateLimitMiddleware, LoggingMiddleware, SecurityHeadersMiddleware
 
 # ─── App Setup ────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="DTR-N API",
     description="DTR-N Multi-Agent AI Platform",
-    version="2.0.0"
+    version="2.3.0"
 )
 
 app.add_middleware(
@@ -42,12 +44,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(LoggingMiddleware)
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
+
 # ─── Global Singletons ────────────────────────────────────────────────────────
 evolution_engine: DTREvolutionEngine = create_engine()
 orchestrator: MultiAgentOrchestrator = MultiAgentOrchestrator()
 github_mgr: GitHubManager = GitHubManager()
 workspace_mgr: WorkspaceManager = WorkspaceManager()
 sub_coordinator: SubAgentCoordinator = get_coordinator()
+START_TIME = time.time()
 START_TIME = time.time()
 
 # ─── Session Store ────────────────────────────────────────────────────────────
@@ -604,6 +611,8 @@ async def get_files():
 async def parallel_status():
     return await get_status()
 
+
+app.include_router(health_router)
 
 if __name__ == "__main__":
     import uvicorn
