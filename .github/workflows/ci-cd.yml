@@ -1,0 +1,211 @@
+# ═══════════════════════════════════════════════════════════════════
+# Rafeeq Kernel v2.3.0 — CI/CD Pipeline
+# Auto-build, test, and deploy to Render + Docker Hub
+# ═══════════════════════════════════════════════════════════════════
+
+name: Rafeeq CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 2 * * *'  # Daily health check at 2 AM UTC
+
+env:
+  PYTHON_VERSION: '3.11'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ─── Lint & Format Check ─────────────────────────────────────
+  lint:
+    name: 🔍 Lint & Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install lint tools
+        run: |
+          pip install black isort flake8 pylint
+
+      - name: Run Black
+        run: black --check --diff .
+        continue-on-error: true
+
+      - name: Run isort
+        run: isort --check-only --diff .
+        continue-on-error: true
+
+      - name: Run Flake8
+        run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        continue-on-error: true
+
+  # ─── Security Scan ───────────────────────────────────────────
+  security:
+    name: 🔒 Security Scan
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Run Bandit
+        uses: PyCQA/bandit@main
+        with:
+          args: "-r . -f json -o bandit-report.json || true"
+
+  # ─── Unit Tests ──────────────────────────────────────────────
+  test:
+    name: 🧪 Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: rafeeq_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov httpx
+
+      - name: Run tests
+        env:
+          DATABASE_URL: postgresql://postgres:test_password@localhost:5432/rafeeq_test
+          REDIS_URL: redis://localhost:6379/1
+          SECRET_KEY: test-secret-key
+        run: |
+          pytest --cov=. --cov-report=xml --cov-report=term -v
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+
+  # ─── Build Docker Image ──────────────────────────────────────
+  build:
+    name: 🐳 Build & Push Docker
+    runs-on: ubuntu-latest
+    needs: [lint, test, security]
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=sha,prefix=,suffix=,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+  # ─── Deploy to Render ────────────────────────────────────────
+  deploy-render:
+    name: 🚀 Deploy to Render
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Trigger Render Deploy
+        run: |
+          curl -X POST             -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}"             -H "Content-Type: application/json"             "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys"             -d '{"clearCache": "do_not_clear"}'
+
+  # ─── Health Check After Deploy ─────────────────────────────
+  health-check:
+    name: ❤️ Post-Deploy Health Check
+    runs-on: ubuntu-latest
+    needs: [deploy-render]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Wait for deployment
+        run: sleep 120
+
+      - name: Check API health
+        run: |
+          curl -f -s -o /dev/null             -w "HTTP Status: %{http_code}\nResponse Time: %{time_total}s\n"             "${{ secrets.PRODUCTION_URL }}/api/health" || exit 1
+
+      - name: Check metrics endpoint
+        run: |
+          curl -f -s -o /dev/null             -w "Metrics Status: %{http_code}\n"             "${{ secrets.PRODUCTION_URL }}/api/metrics" || exit 1
+
+      - name: Notify on failure
+        if: failure()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "🚨 Rafeeq production deployment failed! Check GitHub Actions."
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
